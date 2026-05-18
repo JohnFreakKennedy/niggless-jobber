@@ -1,0 +1,15 @@
+I came across the Senior Backend Engineer role at Acme Corp and was immediately drawn to the team's
+work on real-time data infrastructure - it maps directly to the event-processing systems I have been
+building for the past three years.
+
+At my current role I designed a Kafka-based pipeline that handles 200k messages per second for a
+financial services client, working within a tight latency budget of under 50ms end-to-end. Before
+that I led a PostgreSQL performance project that brought a critical customer-facing query from 800ms
+down to 80ms. Both of these involved close collaboration with product and SRE teams, which I find
+is where the most interesting engineering decisions actually happen.
+
+What appeals to me about Acme specifically is your open-source approach to internal tooling - the
+blog post about your distributed tracing framework showed a clear preference for building reliable
+primitives over chasing framework hype, which aligns with how I approach engineering decisions.
+
+I would welcome the chance to discuss how my background can contribute to your infrastructure roadmap.

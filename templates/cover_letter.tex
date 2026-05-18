@@ -1,0 +1,36 @@
+% =============================================================================
+% Cover letter LaTeX template for niggless-jobber
+% Placeholders replaced by cover_letter/generator.py:
+%   %%NAME%%      - full name
+%   %%EMAIL%%     - email address
+%   %%PHONE%%     - phone number
+%   %%ADDRESS%%   - city, country
+%   %%COMPANY%%   - hiring company
+%   %%JOBTITLE%%  - job title applied for
+%   %%BODY%%      - AI-generated letter body (LaTeX paragraphs)
+% =============================================================================
+\documentclass[11pt, a4paper]{letter}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm, top=2cm, bottom=2cm]{geometry}
+\usepackage{hyperref}
+\usepackage{parskip}
+
+\hypersetup{colorlinks=true, urlcolor=black, hidelinks}
+
+\signature{%%NAME%%}
+\address{%%NAME%% \\ %%ADDRESS%% \\ \href{mailto:%%EMAIL%%}{%%EMAIL%%} \\ %%PHONE%%}
+
+\begin{document}
+
+\begin{letter}{Hiring Team \\ %%COMPANY%%}
+
+\opening{Dear Hiring Team,}
+
+%%BODY%%
+
+\closing{Best regards,}
+
+\end{letter}
+\end{document}
