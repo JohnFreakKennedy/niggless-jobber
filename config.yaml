@@ -1,0 +1,127 @@
+# niggless-jobber configuration
+# All secrets (API keys, passwords) go in the vault, not here.
+# Run:  python run.py --vault-set KEY value
+
+# ---------------------------------------------------------------------------
+# Search settings
+# ---------------------------------------------------------------------------
+search:
+  keywords:
+    - "DevOps Engineer"
+    - "Platform Engineer"
+    - "SRE"
+    - "Site Reliability Engineer"
+    - "Cloud Engineer"
+    - "Infrastructure Engineer"
+
+  locations:
+    - "remote"
+    - "Poland"
+    - "Wroclaw"
+    - "Krakow"
+    - "Warsaw"
+    - "Gdansk"
+    - "Poznan"
+    - "Berlin"
+    - "Munich"
+    - "Hamburg"
+    - "Frankfurt"
+    - "Cologne"
+    - "Bonn"
+    - "Stuttgart"
+    - "Zurich"
+    - "Lucerne"
+    - "Basel"
+    - "Bern"
+    - "Paris"
+
+  # Which job boards to scrape (available: linkedin, justjoinit, dou, djinni, indeed)
+  sources:
+    - justjoinit
+    - djinni
+    - indeed
+    - linkedin
+
+  # Max listings to fetch per source per run
+  max_per_source: 50
+
+# ---------------------------------------------------------------------------
+# Application settings
+# ---------------------------------------------------------------------------
+application:
+  # Hard cap on applications submitted per run.
+  # Overridden at runtime with:  python run.py --limit N
+  max_per_run: 20
+
+  # Run browser in headless mode (true = invisible, false = visible window)
+  headless: true
+
+  # Seconds to wait between consecutive form submissions (min, max)
+  delay_between_apps_min: 8
+  delay_between_apps_max: 20
+
+  # Companies to never apply to (case-insensitive)
+  blocked_companies: []
+
+  # Number of retry attempts for failed applications before giving up
+  max_retries: 2
+
+# ---------------------------------------------------------------------------
+# AI pipeline
+# ---------------------------------------------------------------------------
+ai:
+  # Primary provider: openai | anthropic | gemini
+  provider: gemini
+
+  # Primary model
+  model: gemini-2.0-flash
+
+  # Fallback if primary fails
+  fallback_provider: openai
+  fallback_model: gpt-4o
+
+  # Second fallback
+  fallback2_provider: anthropic
+  fallback2_model: claude-3-5-sonnet-20241022
+
+  temperature: 0.3
+
+  # Token limits
+  cv_max_tokens: 4096
+  cover_letter_max_tokens: 1024
+
+# ---------------------------------------------------------------------------
+# CAPTCHA solvers (at least one API key should be set in the vault)
+# ---------------------------------------------------------------------------
+captcha:
+  # preferred: 2captcha | capsolver
+  preferred: capsolver
+  timeout_seconds: 120
+
+# ---------------------------------------------------------------------------
+# Scheduling (used by --daemon mode and setup_cron.sh)
+# ---------------------------------------------------------------------------
+schedule:
+  # Time of day for the daily run (24-hour, local time)
+  run_at: "12:00"
+  timezone: "Europe/Warsaw"
+
+# ---------------------------------------------------------------------------
+# Google Workspace (optional)
+# Set up with:  python run.py --auth-google --credentials /path/to/creds.json
+# ---------------------------------------------------------------------------
+google:
+  enabled: false
+  spreadsheet_name: "niggless-jobber Applications"
+  calendar_name: "Job Applications"
+  # Days after application to create a follow-up calendar reminder
+  followup_days: 7
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  # debug | info | warning | error
+  level: info
+  # Keep log files for N days
+  retention_days: 30

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# pre-commit: run the test suite before every git commit.
+# Placed in .githooks/ so it is tracked by the repo.
+#
+# Activation (one-time, per clone):
+#   git config core.hooksPath .githooks
+#
+# Or run setup_hooks.sh which does the same thing.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Resolve the Python interpreter: prefer the repo venv, fall back to PATH.
+if [ -f ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+elif command -v python3 &>/dev/null; then
+    PYTHON="python3"
+else
+    echo "[pre-commit] ERROR: no Python interpreter found." >&2
+    exit 1
+fi
+
+echo "[pre-commit] Running test suite..."
+if "$PYTHON" -m pytest tests/ -q --tb=short; then
+    echo "[pre-commit] All tests passed."
+    exit 0
+else
+    echo ""
+    echo "[pre-commit] Tests FAILED. Commit blocked." >&2
+    echo "[pre-commit] Fix the failures above, then commit again." >&2
+    echo "[pre-commit] To skip (not recommended): git commit --no-verify" >&2
+    exit 1
+fi

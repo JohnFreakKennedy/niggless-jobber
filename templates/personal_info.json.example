@@ -1,0 +1,122 @@
+{
+  "name": {
+    "first": "Artem",
+    "last": "Dankov",
+    "full": "Artem Dankov"
+  },
+  "email": "artemdankovjob@gmail.com",
+  "phone": "+48797011929",
+  "address": {
+    "city": "Wroclaw",
+    "country": "Poland",
+    "country_code": "PL"
+  },
+  "linkedin_url": "https://www.linkedin.com/in/artem-dankov/",
+  "github_url": "",
+  "website_url": "",
+  "summary": "DevOps Engineer with 3 years of experience in CI/CD, Kubernetes, cloud platforms (AWS, GCP), and IaC (Terraform, Ansible, Pulumi).",
+  "years_of_experience": 3,
+  "work_authorization": "Ukrainian citizen, EU work permit",
+  "willing_to_relocate": true,
+  "sponsorship_required": false,
+  "notice_period": "2 weeks",
+
+  "salary_expectations": {
+    "b2b": {
+      "hourly": {
+        "EUR": 60,
+        "USD": 65,
+        "PLN": 280,
+        "GBP": 52
+      },
+      "monthly": {
+        "EUR": 10000,
+        "USD": 11000,
+        "PLN": 45000,
+        "GBP": 8500
+      },
+      "yearly": {
+        "EUR": 120000,
+        "USD": 132000,
+        "PLN": 540000,
+        "GBP": 102000
+      }
+    },
+    "permanent": {
+      "monthly": {
+        "EUR": 7500,
+        "USD": 8200,
+        "PLN": 33000,
+        "GBP": 6500
+      },
+      "yearly": {
+        "EUR": 90000,
+        "USD": 98000,
+        "PLN": 396000,
+        "GBP": 78000
+      }
+    }
+  },
+
+  "skills": [
+    "Python", "Go", "Bash",
+    "AWS", "GCP",
+    "Kubernetes", "Docker", "Helm",
+    "Terraform", "Pulumi", "Ansible", "SaltStack",
+    "GitLab CI", "Azure DevOps", "Jenkins", "ArgoCD",
+    "PostgreSQL", "MySQL", "MongoDB", "Redis", "OpenSearch",
+    "Kafka", "RabbitMQ",
+    "Grafana", "Prometheus", "New Relic", "PagerDuty", "ELK", "OpenTelemetry",
+    "Linux", "NGINX", "RBAC", "Rancher"
+  ],
+
+  "work_history": [
+    {
+      "company": "Zoox",
+      "title": "DevOps Engineer",
+      "start": "2026-02",
+      "end": "present",
+      "location": "Remote"
+    },
+    {
+      "company": "Docusign",
+      "title": "DevOps Engineer",
+      "start": "2025-02",
+      "end": "2026-01",
+      "location": "Remote"
+    },
+    {
+      "company": "TENTENS Tech [SKELAR]",
+      "title": "DevOps Engineer",
+      "start": "2022-10",
+      "end": "2024-12",
+      "location": "Warsaw, Poland"
+    },
+    {
+      "company": "Automat-IT",
+      "title": "NOC/DevOps Engineer",
+      "start": "2021-02",
+      "end": "2022-08",
+      "location": "Remote"
+    }
+  ],
+
+  "education": [
+    {
+      "institution": "National Technical University of Ukraine \"Igor Sikorsky Kyiv Polytechnic Institute\"",
+      "degree": "Master's degree in Computer Science",
+      "year": 2022
+    },
+    {
+      "institution": "National Technical University of Ukraine \"Igor Sikorsky Kyiv Polytechnic Institute\"",
+      "degree": "Bachelor's degree in Computer Science",
+      "year": 2020
+    }
+  ],
+
+  "languages": [
+    {"language": "English",   "level": "C1"},
+    {"language": "Polish",    "level": "B2"},
+    {"language": "Ukrainian", "level": "Native"}
+  ]
+}
