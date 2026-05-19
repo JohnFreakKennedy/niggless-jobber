@@ -1,0 +1,127 @@
+# niggless-jobber configuration sample
+# -----------------------------------------------------------------------
+# SETUP: copy this file to config.yaml and edit the values for your needs.
+#
+#   cp config_sample.yaml config.yaml
+#
+# config.yaml is gitignored so your personal settings stay local.
+# All secrets (API keys, passwords) go in the encrypted vault, not here.
+# Run:  python run.py --vault-set KEY value
+# -----------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Search settings
+# ---------------------------------------------------------------------------
+search:
+  # Job titles to search for across all enabled sources.
+  keywords:
+    - "Software Engineer"
+    - "Backend Engineer"
+
+  # Locations to include in searches. Use "remote" to target remote roles.
+  locations:
+    - "remote"
+    - "Your City"
+    - "Your Country"
+
+  # Which job boards to scrape.
+  # Available: linkedin, justjoinit, dou, djinni, indeed
+  sources:
+    - linkedin
+    - justjoinit
+    - djinni
+    - indeed
+
+  # Max listings to fetch per source per run (before deduplication).
+  max_per_source: 50
+
+# ---------------------------------------------------------------------------
+# Application settings
+# ---------------------------------------------------------------------------
+application:
+  # Hard cap on applications submitted per run.
+  # Can be overridden at runtime with:  python run.py --limit N
+  max_per_run: 20
+
+  # Run browser in headless mode (true = invisible, false = visible window).
+  headless: true
+
+  # Seconds to wait between consecutive form submissions (chosen at random
+  # between min and max to mimic human pacing).
+  delay_between_apps_min: 8
+  delay_between_apps_max: 20
+
+  # Companies to never apply to (case-insensitive exact match on company name).
+  blocked_companies: []
+
+  # Number of retry attempts for a failed application before giving up.
+  max_retries: 2
+
+# ---------------------------------------------------------------------------
+# AI pipeline
+# ---------------------------------------------------------------------------
+ai:
+  # Primary provider: openai | anthropic | gemini
+  provider: openai
+
+  # Model name for the primary provider.
+  model: gpt-4o
+
+  # Optional fallback if the primary provider fails.
+  fallback_provider: anthropic
+  fallback_model: claude-3-5-sonnet-20241022
+
+  # Optional second fallback.
+  # fallback2_provider: gemini
+  # fallback2_model: gemini-2.0-flash
+
+  # Lower = more deterministic output (recommended for CV tailoring).
+  temperature: 0.3
+
+  # Maximum tokens per AI response.
+  cv_max_tokens: 4096
+  cover_letter_max_tokens: 1024
+
+  # Number of listings whose CV+cover letter are drafted simultaneously.
+  # Higher = faster overall but more parallel API requests (watch rate limits).
+  concurrency: 3
+
+# ---------------------------------------------------------------------------
+# CAPTCHA solvers
+# Store the corresponding API key in the vault:
+#   python run.py --vault-set CAPSOLVER_API_KEY  <key>
+#   python run.py --vault-set 2CAPTCHA_API_KEY   <key>
+# ---------------------------------------------------------------------------
+captcha:
+  # Preferred solver when both keys are present: 2captcha | capsolver
+  preferred: capsolver
+  timeout_seconds: 120
+
+# ---------------------------------------------------------------------------
+# Scheduling (used by --daemon mode and setup_cron.sh)
+# ---------------------------------------------------------------------------
+schedule:
+  # Time of day for the daily run (24-hour, local time).
+  run_at: "12:00"
+  # IANA timezone name -- find yours at https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+  timezone: "UTC"
+
+# ---------------------------------------------------------------------------
+# Google Workspace (optional)
+# Set up with:  python run.py --auth-google --credentials /path/to/creds.json
+# ---------------------------------------------------------------------------
+google:
+  enabled: false
+  spreadsheet_name: "niggless-jobber Applications"
+  calendar_name: "Job Applications"
+  # Days after application to create a follow-up calendar reminder.
+  followup_days: 7
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  # Verbosity level: debug | info | warning | error
+  level: info
+  # Delete log files older than N days.
+  retention_days: 30

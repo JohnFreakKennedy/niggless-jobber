@@ -58,6 +58,35 @@ _DATA_DIR = Path(os.environ.get("NIGGLESS_DATA_DIR", "") or Path.home() / ".nigg
 _OUTPUT_DIR = _REPO_ROOT / "output"
 _LOG_DIR = _DATA_DIR / "logs"
 
+# ---------------------------------------------------------------------------
+# Output directory naming
+# ---------------------------------------------------------------------------
+
+_SOURCE_DISPLAY: dict[str, str] = {
+    "linkedin": "LinkedIn",
+    "justjoinit": "JustJoinIT",
+    "djinni": "Djinni",
+    "indeed": "Indeed",
+    "dou": "Dou",
+}
+
+from utils import sanitize_name as _sanitize_part
+
+
+def _job_dirname(listing) -> str:
+    """
+    Return a human-readable output directory name for *listing*:
+        <Source>_<Company>_<id_prefix>
+
+    Example: LinkedIn_Google_2e211509efe7
+    """
+    source_display = _SOURCE_DISPLAY.get(
+        listing.source.lower(), listing.source.title()
+    )
+    company_part = _sanitize_part(listing.company, max_len=30) or "Unknown"
+    id_prefix = listing.id[:12]
+    return f"{source_display}_{company_part}_{id_prefix}"
+
 
 def load_config() -> dict:
     with _CONFIG_PATH.open() as f:
@@ -283,17 +312,15 @@ def cmd_auth_google_account() -> None:
 
 def cmd_reset_run() -> None:
     """Clear any stuck 'running' entries in run_log so a new run can start."""
-    from storage.db import get_db
-    db = get_db()
-    result = db.execute(
-        "UPDATE run_log SET status = 'reset', finished_at = datetime('now') WHERE status = 'running'"
-    )
-    affected = result.rowcount
-    db.conn.commit()
-    if affected:
-        print(f"Cleared {affected} stuck run(s). You can now start a new run.")
-    else:
+    from storage import db as _db
+    locked, pid = _db.check_run_lock()
+    if not locked:
         print("No stuck runs found.")
+        return
+    if pid is not None:
+        print(f"Warning: a live process (PID {pid}) may still be running.")
+    _db.clear_stale_lock()
+    print("Cleared stuck run lock. You can now start a new run.")
 
 
 def cmd_test_google() -> None:
@@ -312,6 +339,86 @@ def cmd_test_google() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Concurrent document preparation
+# ---------------------------------------------------------------------------
+
+# Max simultaneous AI requests during document drafting.
+# Override via  ai.concurrency  in config.yaml.
+_AI_CONCURRENCY = 3
+
+
+async def _prepare_documents(
+    listing,
+    job_dir: Path,
+    ai_client,
+    sem: asyncio.Semaphore,
+) -> tuple:
+    """
+    Concurrently draft CV and cover letter for *listing*, then compile both
+    to PDF.  Runs inside *sem* to cap parallel AI API requests.
+
+    Returns (listing, cv_pdf | None, cl_pdf | None, pv_cv, pv_cl).
+    cv_pdf is None when the mandatory CV PDF could not be produced.
+    """
+    from cv_editor.editor import tailor_cv, prompt_version as cv_pv
+    from cover_letter.generator import generate_cover_letter, prompt_version as cl_pv
+    from cover_letter.compiler import compile_pdf
+
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    # Both AI calls run inside the semaphore so we don't flood the provider.
+    async with sem:
+        cv_tex_res, cl_tex_res = await asyncio.gather(
+            tailor_cv(listing, job_dir, ai_client),
+            generate_cover_letter(listing, job_dir, ai_client),
+            return_exceptions=True,
+        )
+
+    # CV is mandatory -- abort early if AI failed.
+    if isinstance(cv_tex_res, Exception):
+        log.error(
+            "CV AI call failed for %s: %s -- will skip application",
+            listing.id[:12], cv_tex_res,
+        )
+        return listing, None, None, "", ""
+
+    if isinstance(cl_tex_res, Exception):
+        log.warning(
+            "Cover letter AI failed for %s: %s -- proceeding without it",
+            listing.id[:12], cl_tex_res,
+        )
+
+    # Compile PDFs in a thread pool so blocking xelatex subprocesses do not
+    # stall the event loop while other listings are still being drafted.
+    compile_tasks = [asyncio.to_thread(compile_pdf, cv_tex_res)]
+    has_cl = not isinstance(cl_tex_res, Exception)
+    if has_cl:
+        compile_tasks.append(asyncio.to_thread(compile_pdf, cl_tex_res))
+
+    compile_results = await asyncio.gather(*compile_tasks, return_exceptions=True)
+
+    cv_path = compile_results[0] if not isinstance(compile_results[0], Exception) else None
+    cl_path = (
+        compile_results[1]
+        if has_cl and len(compile_results) > 1 and not isinstance(compile_results[1], Exception)
+        else None
+    )
+
+    if cv_path is None:
+        log.error("CV PDF compile failed for %s: %s", listing.id[:12], compile_results[0])
+    if has_cl and cl_path is None:
+        log.warning("CL PDF compile failed for %s: %s", listing.id[:12], compile_results[1] if len(compile_results) > 1 else "unknown")
+
+    return (
+        listing,
+        cv_path,
+        cl_path,
+        cv_pv() if cv_path else "",
+        cl_pv() if cl_path else "",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Core pipeline
 # ---------------------------------------------------------------------------
 
@@ -323,9 +430,37 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    if db.is_run_in_progress():
-        log.error("Another run is already in progress. Exiting.")
-        return {}
+    locked, existing_pid = db.check_run_lock()
+    if locked:
+        if existing_pid is None:
+            # Stale lock — process is gone; auto-clear and proceed.
+            log.warning("Stale run lock detected (previous process no longer exists). Clearing automatically.")
+            db.clear_stale_lock()
+        else:
+            # A live process holds the lock — ask the user.
+            print(
+                f"\nAnother run.py is already running (PID {existing_pid}).\n"
+                f"Stop it and start a new run? [y/N] ",
+                end="",
+                flush=True,
+            )
+            try:
+                answer = input().strip().lower()
+            except EOFError:
+                answer = ""
+            if answer not in ("y", "yes"):
+                log.info("User chose not to interrupt the existing run. Exiting.")
+                return {}
+            import signal
+            try:
+                import os as _os
+                _os.kill(existing_pid, signal.SIGTERM)
+                log.info("Sent SIGTERM to PID %d. Waiting briefly...", existing_pid)
+                import time
+                time.sleep(2)
+            except ProcessLookupError:
+                pass  # already gone
+            db.clear_stale_lock()
 
     run_id = db.start_run()
     stats = {"scraped": 0, "new": 0, "applied": 0, "failed": 0, "skipped": 0}
@@ -404,7 +539,7 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
             return stats
 
         # ------------------------------------------------------------------
-        # 3. AI Pipeline + Application
+        # 3. AI Pipeline + Application  (three-phase async design)
         # ------------------------------------------------------------------
         app_cfg = cfg.get("application", {})
         max_per_run = limit if limit is not None else app_cfg.get("max_per_run", 20)
@@ -425,10 +560,41 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
             cover_letter_max_tokens=ai_cfg_raw.get("cover_letter_max_tokens", 1024),
         )
         ai_client = AIClient(ai_config)
+        ai_concurrency = int(ai_cfg_raw.get("concurrency", _AI_CONCURRENCY))
 
-        # Playwright browser (shared for all applications)
+        # ---- Phase A: select candidates (blocked filter, max_per_run cap) ----
+        candidates = []
+        for listing in new_listings:
+            if len(candidates) >= max_per_run:
+                break
+            if listing.company.lower() in blocked_companies:
+                log.info("Skipping blocked company: %s", listing.company)
+                db.insert_application(listing.id, "skipped", reason="blocked_company")
+                stats["skipped"] += 1
+                continue
+            candidates.append(listing)
+
+        log.info(
+            "Phase B: preparing documents for %d listings "
+            "(%d concurrent AI requests, %d concurrent xelatex threads)...",
+            len(candidates), ai_concurrency, ai_concurrency * 2,
+        )
+
+        # ---- Phase B: prepare all documents concurrently --------------------
+        ai_sem = asyncio.Semaphore(ai_concurrency)
+        prep_tasks = [
+            asyncio.create_task(
+                _prepare_documents(
+                    listing, _OUTPUT_DIR / _job_dirname(listing), ai_client, ai_sem,
+                )
+            )
+            for listing in candidates
+        ]
+
+        # ---- Open browser now so it's ready when the first docs complete ----
         browser = None
-        if not no_apply and not dry_run:
+        pw = None
+        if not no_apply and not dry_run and candidates:
             from playwright.async_api import async_playwright
             pw = await async_playwright().start()
             browser = await pw.chromium.launch(
@@ -436,58 +602,30 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
                 args=["--disable-blink-features=AutomationControlled"],
             )
 
+        # ---- Phase C: apply sequentially as each doc set becomes ready ------
+        log.info("Phase C: applying sequentially as documents become ready...")
+        from applicator.ats.base import ApplicationStatus
         applied_count = 0
-        for listing in new_listings:
-            if applied_count >= max_per_run:
-                log.info("max_per_run (%d) reached; stopping", max_per_run)
-                break
 
-            if listing.company.lower() in blocked_companies:
-                log.info("Skipping blocked company: %s", listing.company)
-                db.insert_application(listing.id, "skipped", reason="blocked_company")
-                stats["skipped"] += 1
+        for coro in asyncio.as_completed(prep_tasks):
+            listing, cv_path, cl_path, pv_cv, pv_cl = await coro
+
+            if cv_path is None:
+                db.insert_application(listing.id, "error", reason="cv_pdf_failed")
+                stats["failed"] += 1
                 continue
 
-            log.info("Processing: %s at %s", listing.title, listing.company)
-
-            # Output directory for this job
-            job_dir = _OUTPUT_DIR / listing.id[:12]
-            job_dir.mkdir(parents=True, exist_ok=True)
-
-            # CV tailoring
-            cv_path = None
-            pv_cv = ""
-            try:
-                from cv_editor.editor import tailor_cv, prompt_version as cv_pv
-                from cover_letter.compiler import compile_pdf
-                cv_tex = await tailor_cv(listing, job_dir, ai_client)
-                cv_path = compile_pdf(cv_tex)
-                pv_cv = cv_pv()
-            except Exception as exc:
-                log.warning("CV generation failed for %s: %s", listing.id[:12], exc)
-
-            # Cover letter
-            cl_path = None
-            pv_cl = ""
-            try:
-                from cover_letter.generator import generate_cover_letter, prompt_version as cl_pv
-                from cover_letter.compiler import compile_pdf
-                cl_tex = await generate_cover_letter(listing, job_dir, ai_client)
-                cl_path = compile_pdf(cl_tex)
-                pv_cl = cl_pv()
-            except Exception as exc:
-                log.warning("Cover letter generation failed for %s: %s", listing.id[:12], exc)
+            log.info("Submitting: %s at %s", listing.title, listing.company)
 
             if no_apply:
                 db.insert_application(
                     listing.id, "dry_run",
-                    cv_path=str(cv_path) if cv_path else None,
+                    cv_path=str(cv_path),
                     cover_letter_path=str(cl_path) if cl_path else None,
                     prompt_version_cv=pv_cv, prompt_version_cl=pv_cl,
                 )
                 continue
 
-            # Apply
             from applicator.engine import apply as do_apply
             result = await do_apply(
                 listing, cv_path, cl_path, browser,
@@ -496,8 +634,6 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
                 prompt_version_cl=pv_cl,
             )
 
-            # Persist result
-            from applicator.ats.base import ApplicationStatus
             db.insert_application(
                 listing.id,
                 result.status.value,
@@ -509,7 +645,6 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
                 prompt_version_cl=result.prompt_version_cl,
             )
 
-            # Track
             tracking_cfg = cfg.get("tracking", {})
             if tracking_cfg.get("enabled", True):
                 if tracking_cfg.get("sheets", True):
@@ -529,6 +664,7 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
 
         if browser:
             await browser.close()
+        if pw:
             await pw.stop()
 
         # ------------------------------------------------------------------
@@ -636,7 +772,7 @@ async def run_single_url(url: str, cfg: dict, dry_run: bool = False) -> None:
 
     from cv_editor.client import AIClient, AIConfig
     ai_client = AIClient(AIConfig())
-    job_dir = _OUTPUT_DIR / listing.id[:12]
+    job_dir = _OUTPUT_DIR / _job_dirname(listing)
     job_dir.mkdir(parents=True, exist_ok=True)
 
     from cv_editor.editor import tailor_cv
