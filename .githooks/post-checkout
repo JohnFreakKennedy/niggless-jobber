@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# post-checkout: install dependencies when the repo is freshly cloned or when
+# requirements.txt changes between branch switches.
+#
+# Git passes three arguments:
+#   $1 - previous HEAD sha1  (all-zeros on a fresh clone)
+#   $2 - new HEAD sha1
+#   $3 - checkout type: 1 = branch checkout, 0 = file checkout
+#
+# Activation (one-time, per clone):
+#   git config core.hooksPath .githooks
+# Or run setup_hooks.sh which does the same thing and also runs the install.
+
+PREV_HEAD="$1"
+NEW_HEAD="$2"
+CHECKOUT_TYPE="$3"
+
+# Skip file-level checkouts (git checkout -- <file>).
+if [ "$CHECKOUT_TYPE" = "0" ]; then
+    exit 0
+fi
+
+HOOK_NAME="post-checkout"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# On a fresh clone the previous HEAD is all zeros.
+INITIAL_CLONE=false
+if [ "$PREV_HEAD" = "0000000000000000000000000000000000000000" ]; then
+    INITIAL_CLONE=true
+fi
+
+# Check whether requirements.txt changed between the two refs.
+REQS_CHANGED=false
+if [ "$INITIAL_CLONE" = "true" ]; then
+    REQS_CHANGED=true
+elif ! git -C "$REPO_ROOT" diff --quiet "$PREV_HEAD" "$NEW_HEAD" -- requirements.txt 2>/dev/null; then
+    REQS_CHANGED=true
+fi
+
+# Also install when the venv is simply missing (e.g. after a clean checkout).
+if [ ! -f "$REPO_ROOT/.venv/bin/pip" ]; then
+    REQS_CHANGED=true
+fi
+
+if [ "$REQS_CHANGED" = "true" ]; then
+    export HOOK_NAME
+    # shellcheck source=.githooks/_install_deps.sh
+    source "$REPO_ROOT/.githooks/_install_deps.sh"
+fi

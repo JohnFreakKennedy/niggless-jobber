@@ -38,6 +38,10 @@ def _apply_schema(db: sqlite_utils.Database) -> None:
     schema_path = Path(__file__).parent / "schema.sql"
     with schema_path.open() as fh:
         db.conn.executescript(fh.read())
+    # Idempotent migration: add pid column if it was not in the original schema.
+    existing = {row[1] for row in db.conn.execute("PRAGMA table_info(run_log)")}
+    if "pid" not in existing:
+        db.conn.execute("ALTER TABLE run_log ADD COLUMN pid INTEGER")
     db.conn.commit()
 
 
@@ -157,9 +161,10 @@ def update_application_status(
 # ---------------------------------------------------------------------------
 
 def start_run() -> int:
+    import os
     db = get_db()
     return db["run_log"].insert(
-        {"started_at": now_iso(), "status": "running"}
+        {"started_at": now_iso(), "status": "running", "pid": os.getpid()}
     ).last_pk  # type: ignore[return-value]
 
 
@@ -189,9 +194,52 @@ def finish_run(
     )
 
 
-def is_run_in_progress() -> bool:
+def _pid_is_alive(pid: int | None) -> bool:
+    """Return True if *pid* belongs to a live process we can observe."""
+    if pid is None:
+        return False
+    import os
+    try:
+        os.kill(pid, 0)  # signal 0 = probe only, raises if process gone
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
+def check_run_lock() -> tuple[bool, int | None]:
+    """
+    Check whether a run is genuinely in progress.
+
+    Returns (locked, pid):
+      - locked=False          -> no lock; safe to proceed
+      - locked=True, pid=N   -> a live process (PID N) holds the lock
+      - locked=True, pid=None -> stale lock (process gone); caller should clear it
+    """
     db = get_db()
     row = db.execute(
-        "SELECT 1 FROM run_log WHERE status = 'running' AND started_at > datetime('now', '-2 hours')"
+        "SELECT id, pid FROM run_log "
+        "WHERE status = 'running' AND started_at > datetime('now', '-2 hours') "
+        "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
-    return row is not None
+    if row is None:
+        return False, None
+    pid = row["pid"] if row["pid"] else None
+    if _pid_is_alive(pid):
+        return True, pid
+    return True, None  # stale -- process is gone
+
+
+def clear_stale_lock() -> None:
+    """Mark any 'running' run_log entries as 'stale' (process no longer alive)."""
+    db = get_db()
+    db.execute(
+        "UPDATE run_log SET status = 'stale', finished_at = datetime('now') "
+        "WHERE status = 'running'"
+    )
+    db.conn.commit()
+
+
+def is_run_in_progress() -> bool:
+    """Legacy helper kept for backward compatibility with existing tests."""
+    locked, _ = check_run_lock()
+    return locked

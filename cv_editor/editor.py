@@ -43,6 +43,14 @@ _JD_YEARS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Matches the CV subtitle line (job title) in the header tabular block.
+# The subtitle is the second row of the tabular: comes right after the name
+# row which ends with `\\`, before the `&` column separator.
+_JOB_TITLE_IN_CV_PATTERN = re.compile(
+    r"(\\textbf\{\\huge\s+[^}]+\}\s*&[^\n]+\\\\\n\s*)([^\n&{\\][^\n&]*)(\s*&)",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Personal info loader
@@ -149,6 +157,23 @@ def patch_years_in_tex(content: str, display_years: str) -> str:
     return patched
 
 
+def patch_job_title_in_tex(content: str, title: str) -> str:
+    """
+    Replace the subtitle / job-title line in the CV header tabular block
+    with *title*.  The subtitle is the text that appears on the second row
+    of the name tabular (right before the phone/LinkedIn column).
+
+    If the pattern is not found the content is returned unchanged.
+    """
+    def replacer(m: re.Match) -> str:
+        return f"{m.group(1)}{title}{m.group(3)}"
+
+    patched, n = _JOB_TITLE_IN_CV_PATTERN.subn(replacer, content)
+    if n:
+        log.debug("Pre-patched CV job title -> '%s'", title)
+    return patched
+
+
 # ---------------------------------------------------------------------------
 # Output sanitizer
 # ---------------------------------------------------------------------------
@@ -186,7 +211,8 @@ async def tailor_cv(
     Returns the path to the written file.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / "cv.tex"
+    from utils import artifact_stem
+    out_path = output_dir / f"{artifact_stem(listing.company, 'cv')}.tex"
 
     # ------------------------------------------------------------------
     # 1. Load base CV and personal info
@@ -208,9 +234,10 @@ async def tailor_cv(
     )
 
     # ------------------------------------------------------------------
-    # 2. Deterministic pre-patch: fix years before touching AI
+    # 2. Deterministic pre-patch: fix years + job title before AI
     # ------------------------------------------------------------------
     pre_patched = patch_years_in_tex(base_content, display)
+    pre_patched = patch_job_title_in_tex(pre_patched, listing.title)
 
     # ------------------------------------------------------------------
     # 3. AI tailoring
@@ -274,6 +301,16 @@ async def tailor_cv(
         return out_path
 
     result = _sanitize_tex(result)
+
+    # ------------------------------------------------------------------
+    # 5. Deterministic post-patch: re-enforce title and years after AI.
+    #    The AI may change the subtitle to the company name or alter
+    #    the years count; these patches guarantee the final output is
+    #    always correct regardless of what the AI wrote.
+    # ------------------------------------------------------------------
+    result = patch_job_title_in_tex(result, listing.title)
+    result = patch_years_in_tex(result, display)
+
     out_path.write_text(result, encoding="utf-8")
     log.info(
         "Tailored CV written to %s (%.0f%% lines changed, %s yrs shown)",

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS run_log (
     started_at      TEXT NOT NULL,      -- ISO 8601
     finished_at     TEXT,
     status          TEXT NOT NULL,      -- running | completed | error
+    pid             INTEGER,            -- OS PID of the run.py process
     scraped_count   INTEGER DEFAULT 0,
     new_count       INTEGER DEFAULT 0,
     applied_count   INTEGER DEFAULT 0,
