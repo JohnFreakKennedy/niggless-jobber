@@ -46,50 +46,81 @@ def _build_url(keyword: str, location: str) -> str:
 
 def _parse_card_text(text: str) -> dict:
     """
-    Parse the inner-text of an  li[data-index]  card.  JustJoinIT renders:
+    Parse the inner-text of a JustJoinIT li[data-index] card.
 
-      [badge?]\\nTitle\\nSalary (or Undisclosed Salary)\\n\\nCompany\\n\\nCity[, +N Locations]\\n[Remote]\\nXd left\\nskill1\\nskill2...
+    JustJoinIT separates card sections with blank lines:
+
+      [badges]
+      Title
+      [Salary]
+
+      Company name          <- absent for anonymous postings
+
+      City[, +N more]
+      [Remote]
+      Xd left
+      skill1
+      skill2 ...
+
+    The blank-line boundaries are the reliable way to distinguish the
+    company section from the location section; a line-by-line approach
+    misidentifies city names as the company for anonymous jobs.
     """
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    _BADGES = {"super offer", "1-click apply", "new"}
+    _SALARY_PAT = re.compile(r"\d[\d\s]*[-\u2013]\s*\d|undisclosed salary", re.I)
+    _TIME_PAT = re.compile(r"\d+[dh]\s+left|new", re.I)
 
-    # Remove badge words at the start
-    badges = {"super offer", "1-click apply", "new"}
-    while lines and lines[0].lower() in badges:
-        lines.pop(0)
+    # Split on blank lines to get sections; preserve section order.
+    sections = [s.strip() for s in re.split(r"\n[ \t]*\n", text) if s.strip()]
 
-    title = lines[0] if lines else ""
+    # ---- Section 0: badges + title + optional salary --------------------
+    sec0_lines = [l.strip() for l in sections[0].splitlines() if l.strip()] if sections else []
+    while sec0_lines and sec0_lines[0].lower() in _BADGES:
+        sec0_lines.pop(0)
 
-    salary = ""
+    title = sec0_lines[0] if sec0_lines else ""
+    salary = next((l for l in sec0_lines[1:] if _SALARY_PAT.search(l)), "")
+
+    # ---- Company: present only when there are 3 or more sections --------
+    # With 2 sections: [title+salary | location+skills]  (anonymous company)
+    # With 3 sections: [title+salary | company | location+skills]
+    # With 4+ sections: extra badge/promo sections may appear before company.
     company = ""
+    loc_section_idx = 1  # default: location block is section 1 (anonymous)
+
+    if len(sections) >= 3:
+        # Middle section(s) before the location block contain the company.
+        # The location block is the one that contains a time marker.
+        for i, sec in enumerate(sections[1:], start=1):
+            if _TIME_PAT.search(sec):
+                loc_section_idx = i
+                # Everything between sec0 and loc_section is company info.
+                company_lines = []
+                for j in range(1, i):
+                    company_lines += [l.strip() for l in sections[j].splitlines() if l.strip()]
+                company = company_lines[0] if company_lines else ""
+                break
+
+    # ---- Location section: city, remote flag, time marker, skills -------
+    loc_sec = sections[loc_section_idx] if loc_section_idx < len(sections) else ""
+    loc_lines = [l.strip() for l in loc_sec.splitlines() if l.strip()]
+
     location_txt = ""
     is_remote = False
     skills: list[str] = []
+    in_skills = False
 
-    salary_pat = re.compile(r"\d[\d\s]*[-\u2013]\s*\d|undisclosed salary", re.I)
-    time_pat = re.compile(r"\d+[dh]\s+left|new", re.I)
-    location_pat = re.compile(r"^[A-Z\u00C0-\u024F][a-zA-Z\u00C0-\u024F\s\-]+$")
-
-    state = "after_title"
-    for line in lines[1:]:
-        if state == "after_title":
-            if salary_pat.search(line):
-                salary = line
-            elif line:
-                company = line
-                state = "location"
-        elif state == "location":
-            if ", +" in line or line.lower().startswith("+"):
-                continue
-            if line.lower() == "remote":
-                is_remote = True
-            elif time_pat.match(line):
-                state = "skills"
-            elif location_pat.match(line) and not company:
-                company = line
-            elif location_pat.match(line):
-                location_txt = line
-        elif state == "skills":
+    for line in loc_lines:
+        if in_skills:
             skills.append(line)
+        elif _TIME_PAT.match(line):
+            in_skills = True
+        elif line.lower() == "remote":
+            is_remote = True
+        elif ", +" in line or line.lower().startswith("+"):
+            continue
+        elif not location_txt:
+            location_txt = line
 
     return {
         "title": title,

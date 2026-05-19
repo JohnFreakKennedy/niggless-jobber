@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# post-merge: re-install dependencies when requirements.txt changes after a
+# git pull or git merge.
+#
+# Activation (one-time, per clone):
+#   git config core.hooksPath .githooks
+# Or run setup_hooks.sh which does the same thing.
+
+HOOK_NAME="post-merge"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# MERGE_HEAD is set when a merge is in progress; ORIG_HEAD is the pre-merge tip.
+ORIG_HEAD="$(git rev-parse ORIG_HEAD 2>/dev/null || echo "")"
+NEW_HEAD="$(git rev-parse HEAD 2>/dev/null || echo "")"
+
+REQS_CHANGED=false
+
+if [ -n "$ORIG_HEAD" ] && [ -n "$NEW_HEAD" ]; then
+    if ! git -C "$REPO_ROOT" diff --quiet "$ORIG_HEAD" "$NEW_HEAD" -- requirements.txt 2>/dev/null; then
+        REQS_CHANGED=true
+    fi
+else
+    # Can't determine diff -- install to be safe.
+    REQS_CHANGED=true
+fi
+
+# Also install when the venv is missing.
+if [ ! -f "$REPO_ROOT/.venv/bin/pip" ]; then
+    REQS_CHANGED=true
+fi
+
+if [ "$REQS_CHANGED" = "true" ]; then
+    export HOOK_NAME
+    # shellcheck source=.githooks/_install_deps.sh
+    source "$REPO_ROOT/.githooks/_install_deps.sh"
+fi

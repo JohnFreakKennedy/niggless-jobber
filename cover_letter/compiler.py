@@ -25,6 +25,7 @@ def compile_pdf(tex_path: Path) -> Path:
     Returns the path to the generated PDF.
     Raises RuntimeError on compilation failure.
     """
+    tex_path = tex_path.resolve()
     output_dir = tex_path.parent
     cmd = [
         _XELATEX,
