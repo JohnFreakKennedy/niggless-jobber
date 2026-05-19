@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import date
 from pathlib import Path
 
 from cover_letter.prompts import CL_PROMPT_VERSION, CL_SYSTEM_PROMPT, CL_USER_TEMPLATE
@@ -59,7 +60,8 @@ async def generate_cover_letter(
     Returns the path to the written .tex file.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / "cover_letter.tex"
+    from utils import artifact_stem
+    out_path = output_dir / f"{artifact_stem(listing.company, 'cover_letter')}.tex"
 
     info = _load_personal_info()
     sample = _load_sample()
@@ -111,15 +113,18 @@ def _assemble(body: str, listing: JobListing, info: dict) -> str:
     name = info.get("name", {}).get("full") or info.get("name", "")
     email = info.get("email", "")
     phone = info.get("phone", "")
-    address = (info.get("address") or {}).get("city", "") + ", " + (info.get("address") or {}).get("country", "")
+    addr = info.get("address") or {}
+    address = ", ".join(p for p in [addr.get("city", ""), addr.get("country", "")] if p)
+    today = date.today().strftime("%B %-d, %Y")
     return (
         template
         .replace("%%NAME%%", name)
         .replace("%%EMAIL%%", email)
         .replace("%%PHONE%%", phone)
-        .replace("%%ADDRESS%%", address.strip(", "))
+        .replace("%%ADDRESS%%", address)
         .replace("%%COMPANY%%", listing.company)
         .replace("%%JOBTITLE%%", listing.title)
+        .replace("%%DATE%%", today)
         .replace("%%BODY%%", body)
     )
 

@@ -1,36 +1,57 @@
 % =============================================================================
 % Cover letter LaTeX template for niggless-jobber
 % Placeholders replaced by cover_letter/generator.py:
-%   %%NAME%%      - full name
-%   %%EMAIL%%     - email address
-%   %%PHONE%%     - phone number
-%   %%ADDRESS%%   - city, country
-%   %%COMPANY%%   - hiring company
-%   %%JOBTITLE%%  - job title applied for
-%   %%BODY%%      - AI-generated letter body (LaTeX paragraphs)
+%   NAME      - full name
+%   EMAIL     - email address
+%   PHONE     - phone number
+%   ADDRESS   - city, country
+%   COMPANY   - hiring company
+%   JOBTITLE  - job title applied for
+%   DATE      - today's date (inserted by generator)
+%   BODY      - AI-generated letter body (LaTeX paragraphs)
 % =============================================================================
-\documentclass[11pt, a4paper]{letter}
+\documentclass[11pt, a4paper]{article}
 
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
-\usepackage[margin=2.5cm, top=2cm, bottom=2cm]{geometry}
+\usepackage[margin=2.5cm, top=2.5cm, bottom=2.5cm]{geometry}
 \usepackage{hyperref}
 \usepackage{parskip}
 
 \hypersetup{colorlinks=true, urlcolor=black, hidelinks}
-
-\signature{%%NAME%%}
-\address{%%NAME%% \\ %%ADDRESS%% \\ \href{mailto:%%EMAIL%%}{%%EMAIL%%} \\ %%PHONE%%}
+\pagestyle{empty}
 
 \begin{document}
 
-\begin{letter}{Hiring Team \\ %%COMPANY%%}
+% Sender information -- top right
+\begin{flushright}
+%%NAME%% \\
+%%ADDRESS%% \\
+\href{mailto:%%EMAIL%%}{%%EMAIL%%} \\
+%%PHONE%%
+\end{flushright}
 
-\opening{Dear Hiring Team,}
+\bigskip
+\noindent %%DATE%%
+
+\bigskip
+\noindent Hiring Team \\
+%%COMPANY%%
+
+\bigskip
+\noindent \textbf{Re: %%JOBTITLE%%}
+
+\bigskip
+\noindent Dear Hiring Team,
+
+\noindent I am applying for the \textbf{%%JOBTITLE%%} position at \textbf{%%COMPANY%%}.
 
 %%BODY%%
 
-\closing{Best regards,}
+\bigskip
+\noindent Best regards,
 
-\end{letter}
+\bigskip
+\noindent %%NAME%%
+
 \end{document}

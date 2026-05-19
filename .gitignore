@@ -5,6 +5,12 @@ personal_info.json
 niggless-jobber-creds.json
 *_session.json
 
+# User-specific config (copy config_sample.yaml -> config.yaml and edit)
+config.yaml
+
+# User's personal CV (copy templates/cv_sample.tex -> templates/cv.tex and edit)
+templates/cv.tex
+
 # Generated outputs
 output/
 logs/
