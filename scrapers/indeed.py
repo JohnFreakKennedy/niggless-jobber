@@ -31,6 +31,7 @@ class IndeedScraper(BaseScraper):
 
         from scrapers.google_auth import make_context, click_google_signin, profile_exists
 
+        seen_urls: set[str] = set()
         results: list[dict] = []
         async with async_playwright() as pw:
             ctx, browser = await make_context(
@@ -54,7 +55,16 @@ class IndeedScraper(BaseScraper):
                     log.debug("Indeed Google sign-in skipped: %s", exc)
 
             for keyword in self.keywords:
+                if len(results) >= self.max_results:
+                    break
+                empty_streak = 0
+
                 for location in self.locations:
+                    if len(results) >= self.max_results:
+                        break
+                    if empty_streak >= 3:
+                        log.info("Indeed: 3 empty locations for %r -- moving on", keyword)
+                        break
                     params = {
                         "q": keyword,
                         "l": location if location.lower() != "remote" else "remote",
@@ -64,6 +74,7 @@ class IndeedScraper(BaseScraper):
                     url = _SEARCH + "?" + urllib.parse.urlencode(params)
                     page_offset = 0
 
+                    new_this_location = 0
                     while len(results) < self.max_results:
                         full_url = url + (f"&start={page_offset}" if page_offset > 0 else "")
                         try:
@@ -77,20 +88,35 @@ class IndeedScraper(BaseScraper):
 
                             html = await page.content()
                             listings, has_more = self._parse_list(html)
+                            added = 0
                             for listing in listings:
                                 if len(results) >= self.max_results:
                                     break
+                                if listing["url"] in seen_urls:
+                                    continue
+                                seen_urls.add(listing["url"])
                                 detail = await self._fetch_detail(page, listing["url"])
                                 listing["description"] = detail
                                 results.append(listing)
+                                added += 1
+                                new_this_location += 1
                                 await asyncio.sleep(random.uniform(_DELAY_MIN, _DELAY_MAX))
-                            if not has_more or not listings:
+                            if not has_more or not listings or added == 0:
                                 break
                             page_offset += 10
                             await asyncio.sleep(random.uniform(8, 15))
                         except Exception as exc:
                             log.error("Indeed search error: %s", exc)
                             break
+
+                    if new_this_location == 0:
+                        empty_streak += 1
+                    else:
+                        empty_streak = 0
+                    log.info(
+                        "Indeed: %d new from keyword=%r location=%r (%d total)",
+                        new_this_location, keyword, location, len(results),
+                    )
 
             await browser.close()
         return results[:self.max_results]

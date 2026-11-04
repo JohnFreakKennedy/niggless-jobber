@@ -217,6 +217,11 @@ class JustJoinITScraper(BaseScraper):
             await _login_justjoinit(page, ctx)
 
             for keyword in self.keywords:
+                if len(results) >= self.max_results:
+                    break
+
+                empty_streak = 0  # consecutive locations yielding 0 new results
+
                 for location in self.locations:
                     if len(results) >= self.max_results:
                         break
@@ -256,6 +261,7 @@ class JustJoinITScraper(BaseScraper):
                         });
                     }""")
 
+                    new_this_location = 0
                     for card in cards:
                         if len(results) >= self.max_results:
                             break
@@ -283,11 +289,25 @@ class JustJoinITScraper(BaseScraper):
                             "posted_at": "",
                             "skills": parsed["skills"],
                         })
+                        new_this_location += 1
 
                     log.info(
-                        "JustJoinIT: %d listings from keyword=%r location=%r",
-                        len(cards), keyword, location,
+                        "JustJoinIT: %d new listings from keyword=%r location=%r (%d total)",
+                        new_this_location, keyword, location, len(results),
                     )
+
+                    # Stop iterating locations for this keyword when we see
+                    # several consecutive locations with no new unique results.
+                    if new_this_location == 0:
+                        empty_streak += 1
+                        if empty_streak >= 3:
+                            log.info(
+                                "JustJoinIT: 3 consecutive empty locations for keyword=%r -- moving on",
+                                keyword,
+                            )
+                            break
+                    else:
+                        empty_streak = 0
 
             # Optionally fetch descriptions for the top N results
             _DETAIL_LIMIT = min(len(results), 20)
