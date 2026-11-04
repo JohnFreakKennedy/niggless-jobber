@@ -27,7 +27,7 @@ def _info():
         "name": {"full": "Jane Sample"},
         "email": "test@example.com",
         "phone": "+48123456789",
-        "address": {"city": "Wroclaw", "country": "Poland"},
+        "address": {"city": "Anytown", "country": "Poland"},
     }
 
 
@@ -94,5 +94,5 @@ class TestCoverLetterAssembly:
 
     def test_address_city_and_country(self):
         tex = _assemble("Body.", _listing(), _info())
-        assert "Wroclaw" in tex
+        assert "Anytown" in tex
         assert "Poland" in tex

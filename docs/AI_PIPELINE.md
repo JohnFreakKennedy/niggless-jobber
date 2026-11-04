@@ -38,7 +38,7 @@ Set in `config.yaml`:
 
 ```yaml
 ai:
-  provider: openai          # primary provider: "openai" or "anthropic"
+  provider: openai          # primary provider: openai | anthropic | gemini | ollama
   model: gpt-4o             # model name used by primary provider
   fallback_provider: anthropic
   fallback_model: claude-3-5-sonnet-20241022
@@ -51,8 +51,39 @@ API keys are read from the Fernet vault:
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 
-The `AIClient` tries the primary provider first. On `RateLimitError`, `APIConnectionError`, or
-any 5xx response it waits 10 seconds and retries once, then falls back to the secondary provider.
+The `AIClient` tries the primary provider first. If that call raises, it waits
+`fallback_delay` seconds (default 10) and tries `fallback_provider` once. With
+`fallback_provider: none`, or a fallback identical to the primary (same provider and model),
+the original error is raised instead.
+
+Environment overrides: `NIGGLESS_AI_PROVIDER` replaces the provider and `NIGGLESS_AI_MODEL`
+the model. When only the provider is overridden to a different one, that provider's default
+model is used (`gpt-4o`, `claude-3-5-sonnet-20241022`, `gemini-3.8-flash`, `llama3.1:8b`).
+
+`AIClient.complete(system_prompt, user_message, max_tokens=None, json_mode=False)` —
+`json_mode=True` asks for a JSON object: OpenAI `response_format={"type": "json_object"}`,
+Gemini `response_mime_type="application/json"`, Ollama `"format": "json"`. Anthropic has no
+such flag; the prompt must ask for JSON.
+
+### Local models (Ollama)
+
+`provider: ollama` sends a non-streaming `POST {ollama_base_url}/api/chat` with
+`options.temperature`, `options.num_predict` (= max tokens) and `options.num_ctx`
+(`ollama_num_ctx`, default 8192). No API key is needed.
+
+```yaml
+ai:
+  provider: ollama
+  model: llama3.1:8b
+  fallback_provider: none
+  ollama_base_url: http://localhost:11434   # OLLAMA_HOST env wins; scheme optional
+  ollama_num_ctx: 8192
+  request_timeout: 300                      # seconds
+```
+
+Run `ollama serve` and `ollama pull <model>` first. If Ollama is not reachable the error asks
+whether `ollama serve` is running; an HTTP 404 means the model is not pulled and the error
+prints the `ollama pull` command.
 
 ---
 
@@ -60,76 +91,94 @@ any 5xx response it waits 10 seconds and retries once, then falls back to the se
 
 ### Goal
 
-Reorder and lightly rephrase the bullet points in your base CV so that the most relevant
-experience appears near the top and the language mirrors the job description's vocabulary.
-The AI must NOT invent new jobs, new skills, or new dates.
+Make the match between the CV and the job obvious at a glance, without adding a single fact.
+The summary is rewritten to name the strongest overlaps, bullets are reworded with the job's
+vocabulary and reordered most-relevant-first, and skills are reordered so the ones the job asks
+for come first. Nothing is ever invented or removed.
 
-### Input
+### How it works (`cv_editor/editor.py::tailor_cv`)
 
-1. `templates/cv.tex` - your base CV in LaTeX
-2. `description` field from `JobListing` - the cleaned plain-text job description
-3. `skills` list from `JobListing` - extracted tech keywords
+The model never sees or writes LaTeX structure. It works on JSON:
 
-### System prompt (`cv_editor/prompts.py`)
+1. **Pre-patch.** `\jobtitle` is set to the job's title (LaTeX-escaped) and every
+   "N years of experience" gets the value computed from `personal_info.json` `work_history`.
+2. **Parse** (`cv_editor/structure.py`). The editable units are the summary (between
+   `% @summary-begin` and `% @summary-end`), each `\resumeItem{...}` bullet grouped by its
+   `\resumeSubheading` role, prose paragraphs under `\resumeSubheadingSimple` (older
+   templates), and each `\skillline{Category}{a, b, c}` row. Everything else is copied byte
+   for byte. A template with none of these is used as is, with a warning.
+3. **Job analysis** (AI call 1, JSON mode). It extracts required and preferred skills,
+   seniority, responsibilities and domain keywords. On failure, `listing.skills` is used.
+   Required skills the CV does not mention are the **gaps**. They are passed to the model
+   as "never mention".
+4. **Edits** (AI call 2, JSON mode, one retry on broken JSON). The model returns `summary`,
+   `bullets` (by id), `bullet_order` (per role), `skills` (per line) and `skill_order`.
+5. **Checks** (`cv_editor/tailoring.py`). Each edit is checked on its own. A failing edit
+   keeps the original text for that unit only:
+   - no technology the CV does not already mention, and for a bullet none its own role
+     does not mention;
+   - no number that is not in the original bullet (the whole CV, for the summary);
+   - no seniority word (senior, lead, architect, ...) the CV does not use;
+   - a bullet keeps at least 50% of its original content words, which catches facts
+     swapped between bullets;
+   - a bullet may grow at most 25% (or 40 characters), the summary at most 60% (or 360
+     characters);
+   - balanced braces, no new LaTeX commands, and bare `& % # _` are escaped;
+   - orders must be reorders. Ids left out keep their place after the listed ones, and an
+     unknown or repeated id rejects the whole order. Skill items are never added or removed.
+   For the summary, a leading "Senior/Lead" the CV does not support is dropped. A failing
+   sentence is removed and the rest is kept, as long as the opening sentence survives.
+   The buzzword cleaner (`cv_editor/cleaner.py`) runs on AI-written text only.
+6. **Fallback.** When there are no valid AI edits, the skills are still reordered by job
+   relevance, which is deterministic.
+7. **Post-patch** title and years again, then write `<Company>_cv.tex`.
 
-```
-You are an expert technical resume editor.
+### Tailoring report
 
-Rules you MUST follow without exception:
-1. Never add any experience, skill, project, date, company, or job title that is not
-   already present in the provided CV.
-2. Never change dates, job titles, or company names.
-3. Only reorder, rephrase, or emphasise existing content.
-4. Preserve all LaTeX syntax exactly. Do not add or remove packages, commands, or
-   environments.
-5. Output ONLY the complete modified LaTeX source. No explanations. No markdown fences.
-6. Keep the output within the same approximate page count as the input.
+Next to every CV, `<Company>_cv_tailoring.json` records:
+- the job analysis and the gaps;
+- keyword coverage before and after (`score`, `found`, `missing`): whether the CV names
+  the job's skills anywhere;
+- prominence before and after: the share of the job's skills named in the summary, the
+  first bullet of each role and the top two skill lines. This is what tailoring raises;
+- which units were edited or reordered;
+- every discarded edit with its reason;
+- the raw AI edits.
 
-Your task:
-- Read the job description below.
-- Identify the top skills, technologies, and responsibilities the employer values.
-- Reorder the bullet points within each job experience section so that the bullets most
-  relevant to the job description appear first.
-- Lightly rephrase up to 20% of bullet points to use vocabulary from the job description
-  where the meaning is identical to the original.
-- Do NOT add a "Skills" section item if it is not already in the CV.
-- Do NOT remove existing bullet points; you may de-emphasise by moving them lower.
-```
+Read it to see why a CV came out the way it did.
 
-### User message format
+### Template requirements
 
-```
-=== JOB DESCRIPTION ===
-{listing.description}
+Start from `templates/cv_sample.tex`. Keep `\newcommand{\jobtitle}{...}`, the summary markers,
+`\resumeItem` bullets and `\skillline` rows. Write the full CV you would be happy to send:
+tailoring only re-weights it.
 
-=== TOP KEYWORDS FROM JOB ===
-{", ".join(listing.skills)}
+### One page
 
-=== YOUR CURRENT CV (LaTeX source) ===
-{base_cv_content}
-```
+`compile_pdf(tex, fit_one_page=True)` (used for every CV) reads the page count from the xelatex
+log. If the CV spills onto a second page, it recompiles with tighter spacing presets: line
+spread first, then a smaller body font, then smaller margins. It stops at the first preset
+that fits and writes it into the `.tex`. If even the tightest preset is not enough, a warning
+asks you to shorten the base CV.
 
-### Response handling
+### Local models
 
-The response is expected to be valid LaTeX. The editor:
-
-1. Checks that the response starts with `\documentclass` or `%` (comment) - if not, the run
-   is aborted and the base CV is used unchanged (logged as a warning).
-2. Diffs the response against the base CV using `difflib`. If more than 30% of lines differ
-   it triggers a warning (possible hallucination) and keeps the base CV.
-3. Writes the output to `output/<job_id>/cv.tex`.
+The checks are what make small local models (Ollama, 4-8B) safe: they often return
+partial orders, copy the job's title or name skills the CV lacks, and those parts are dropped
+while the rest is used. Expect fewer rewrites from them than from a large hosted model.
+`tests/test_live_models.py` runs the whole flow (CV and cover letter) against a real model
+when `NIGGLESS_LIVE=1`; choose it with `NIGGLESS_LIVE_PROVIDER` and `NIGGLESS_LIVE_MODEL`.
 
 ### Token budget
 
 | Component | Approx tokens |
 |---|---|
-| System prompt | ~350 |
-| Job description | ~500-1500 |
-| Base CV (LaTeX) | ~1500-3000 |
-| Output (modified CV) | ~1500-3000 |
-| Total | ~4000-8000 |
+| JD analysis (in + out) | ~1500-2500 |
+| Tailoring prompt + JD excerpt | ~1500-2000 |
+| CV units (JSON) | ~500-1200 |
+| Output (edits JSON) | ~400-1200 |
 
-Use `gpt-4o` (128k context) or `claude-3-5-sonnet` (200k context). Both fit comfortably.
+This fits easily in an 8k-token context, which is the Ollama default here (`ollama_num_ctx`).
 
 ---
 
@@ -247,7 +296,7 @@ All prompts are defined as module-level string constants in `cv_editor/prompts.p
 `cover_letter/prompts.py`. Each constant has a version comment:
 
 ```python
-# prompt version: cv-v3
+# prompt version: cv-v6
 CV_SYSTEM_PROMPT = """..."""
 ```
 

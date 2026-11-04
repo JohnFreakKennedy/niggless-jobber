@@ -76,15 +76,20 @@ from utils import sanitize_name as _sanitize_part
 def _job_dirname(listing) -> str:
     """
     Return a human-readable output directory name for *listing*:
-        <Source>_<Company>_<id_prefix>
+        <Source>_<Company>_<Location>_<id_prefix>
 
-    Example: LinkedIn_Google_2e211509efe7
+    Example: LinkedIn_Google_Remote_2e211509efe7
+             JustJoinIT_Vecten_Warszawa_48ed873d9a2f
+    Location segment is omitted when the listing has no location.
     """
     source_display = _SOURCE_DISPLAY.get(
         listing.source.lower(), listing.source.title()
     )
-    company_part = _sanitize_part(listing.company, max_len=30) or "Unknown"
+    company_part = _sanitize_part(listing.company, max_len=25) or "Unknown"
+    location_part = _sanitize_part(getattr(listing, "location", "") or "", max_len=20)
     id_prefix = listing.id[:12]
+    if location_part:
+        return f"{source_display}_{company_part}_{location_part}_{id_prefix}"
     return f"{source_display}_{company_part}_{id_prefix}"
 
 
@@ -390,7 +395,7 @@ async def _prepare_documents(
 
     # Compile PDFs in a thread pool so blocking xelatex subprocesses do not
     # stall the event loop while other listings are still being drafted.
-    compile_tasks = [asyncio.to_thread(compile_pdf, cv_tex_res)]
+    compile_tasks = [asyncio.to_thread(compile_pdf, cv_tex_res, fit_one_page=True)]
     has_cl = not isinstance(cl_tex_res, Exception)
     if has_cl:
         compile_tasks.append(asyncio.to_thread(compile_pdf, cl_tex_res))
@@ -489,57 +494,8 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
             if source in scraper_map:
                 scraper_tasks.append((source, scraper_map[source]))
 
-        log.info("Starting scrape from %d sources...", len(scraper_tasks))
-        results = await asyncio.gather(
-            *[s.run() for _, s in scraper_tasks],
-            return_exceptions=True,
-        )
-        for (source, _), result in zip(scraper_tasks, results):
-            if isinstance(result, Exception):
-                log.error("Scraper %s failed: %s", source, result)
-                continue
-            raw_list = normalise_many(result, source)
-            for listing in raw_list:
-                all_raw.append(listing)
-            log.info("Scraped %d listings from %s", len(result), source)
-
-        stats["scraped"] = len(all_raw)
-        log.info("Total scraped: %d", stats["scraped"])
-
         # ------------------------------------------------------------------
-        # 2. Deduplicate
-        # ------------------------------------------------------------------
-        # Load URLs already logged in Google Sheets (guards against DB wipes)
-        try:
-            from tracking.sheets import get_applied_urls
-            sheets_applied_urls = get_applied_urls()
-        except Exception:
-            sheets_applied_urls = set()
-
-        new_listings = []
-        _dedup_limit = (limit * 3) if limit is not None else None
-        for listing in all_raw:
-            if _dedup_limit and len(new_listings) >= _dedup_limit:
-                break
-            if db.job_exists(listing.id):
-                continue
-            if db.already_applied(listing.id):
-                continue
-            if listing.url in sheets_applied_urls or listing.apply_url in sheets_applied_urls:
-                log.info("Skipping %s (already in Sheets): %s", listing.company, listing.url)
-                continue
-            db.insert_job(listing.to_db_dict())
-            new_listings.append(listing)
-
-        stats["new"] = len(new_listings)
-        log.info("New listings after dedup: %d", stats["new"])
-
-        if not new_listings:
-            db.finish_run(run_id, **stats)
-            return stats
-
-        # ------------------------------------------------------------------
-        # 3. AI Pipeline + Application  (three-phase async design)
+        # 2. Shared dedup state + AI client (used by scrape phase)
         # ------------------------------------------------------------------
         app_cfg = cfg.get("application", {})
         max_per_run = limit if limit is not None else app_cfg.get("max_per_run", 20)
@@ -550,51 +506,114 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
 
         ai_cfg_raw = cfg.get("ai", {})
         from cv_editor.client import AIClient, AIConfig
-        ai_config = AIConfig(
-            provider=os.environ.get("NIGGLESS_AI_PROVIDER") or ai_cfg_raw.get("provider", "openai"),
-            model=ai_cfg_raw.get("model", "gpt-4o"),
-            fallback_provider=ai_cfg_raw.get("fallback_provider", "anthropic"),
-            fallback_model=ai_cfg_raw.get("fallback_model", "claude-3-5-sonnet-20241022"),
-            temperature=ai_cfg_raw.get("temperature", 0.3),
-            cv_max_tokens=ai_cfg_raw.get("cv_max_tokens", 4096),
-            cover_letter_max_tokens=ai_cfg_raw.get("cover_letter_max_tokens", 1024),
-        )
+        ai_config = AIConfig.from_dict(ai_cfg_raw)
+        log.info("AI provider: %s (model %s)", ai_config.provider, ai_config.model)
         ai_client = AIClient(ai_config)
         ai_concurrency = int(ai_cfg_raw.get("concurrency", _AI_CONCURRENCY))
+        ai_sem = asyncio.Semaphore(ai_concurrency)
 
-        # ---- Phase A: select candidates (blocked filter, max_per_run cap) ----
-        candidates = []
-        for listing in new_listings:
-            if len(candidates) >= max_per_run:
-                break
-            if listing.company.lower() in blocked_companies:
-                log.info("Skipping blocked company: %s", listing.company)
-                db.insert_application(listing.id, "skipped", reason="blocked_company")
-                stats["skipped"] += 1
-                continue
-            candidates.append(listing)
+        # Load Sheets URLs upfront (single network call, used during dedup)
+        try:
+            from tracking.sheets import get_applied_urls
+            sheets_applied_urls = get_applied_urls()
+        except Exception:
+            sheets_applied_urls = set()
+
+        # Dedup guard: track IDs already pushed this run (across scrapers)
+        _seen_this_run: set[str] = set()
+        _dedup_cap = (limit * 3) if limit is not None else None
+
+        def _is_new_listing(listing) -> bool:
+            """Return True and register the listing if it is genuinely new."""
+            if _dedup_cap and stats["new"] >= _dedup_cap:
+                return False
+            if listing.id in _seen_this_run:
+                return False
+            _seen_this_run.add(listing.id)
+            if db.job_exists(listing.id) or db.already_applied(listing.id):
+                return False
+            if listing.url in sheets_applied_urls or listing.apply_url in sheets_applied_urls:
+                log.info("Skipping %s (already in Sheets): %s", listing.company, listing.url)
+                return False
+            db.insert_job(listing.to_db_dict())
+            stats["new"] += 1
+            return True
+
+        # ------------------------------------------------------------------
+        # 3. Pipeline: scrape + draft documents concurrently
+        #
+        #    Each scraper pushes new listings into a queue as it finishes.
+        #    A dispatcher pulls from the queue and immediately starts AI doc
+        #    prep tasks.  Scrapers and doc prep therefore overlap in time.
+        # ------------------------------------------------------------------
+        listing_queue: asyncio.Queue = asyncio.Queue()
+        prep_tasks: dict[str, asyncio.Task] = {}  # listing.id -> Task
+        candidate_count = 0
+
+        async def _scrape_one(source: str, scraper) -> None:
+            try:
+                raw = await scraper.run()
+            except Exception as exc:
+                log.error("Scraper %s failed: %s", source, exc)
+                raw = []
+            stats["scraped"] += len(raw)
+            new_count = 0
+            for listing in normalise_many(raw, source):
+                if _is_new_listing(listing):
+                    await listing_queue.put(listing)
+                    new_count += 1
+            log.info("Scraped %d new listings from %s", new_count, source)
+
+        async def _run_all_scrapers() -> None:
+            log.info("Starting scrape from %d sources...", len(scraper_tasks))
+            await asyncio.gather(*[_scrape_one(s, sc) for s, sc in scraper_tasks])
+            await listing_queue.put(None)  # sentinel: all scrapers done
+
+        async def _doc_dispatcher() -> None:
+            nonlocal candidate_count
+            while True:
+                listing = await listing_queue.get()
+                if listing is None:
+                    break  # all scrapers finished
+                if candidate_count >= max_per_run:
+                    continue  # drain queue but don't start more prep
+                if listing.company.lower() in blocked_companies:
+                    log.info("Skipping blocked company: %s", listing.company)
+                    db.insert_application(listing.id, "skipped", reason="blocked_company")
+                    stats["skipped"] += 1
+                    continue
+                candidate_count += 1
+                task = asyncio.create_task(
+                    _prepare_documents(
+                        listing, _OUTPUT_DIR / _job_dirname(listing), ai_client, ai_sem,
+                    )
+                )
+                prep_tasks[listing.id] = task
+                log.info(
+                    "Started doc prep for [%d/%d]: %s @ %s",
+                    candidate_count, max_per_run, listing.title, listing.company,
+                )
+
+        # Run scrapers and dispatcher concurrently -- docs start as listings arrive
+        await asyncio.gather(_run_all_scrapers(), _doc_dispatcher())
 
         log.info(
-            "Phase B: preparing documents for %d listings "
-            "(%d concurrent AI requests, %d concurrent xelatex threads)...",
-            len(candidates), ai_concurrency, ai_concurrency * 2,
+            "Scraping done. new=%d candidates=%d | waiting for %d doc prep tasks...",
+            stats["new"], candidate_count, len(prep_tasks),
         )
 
-        # ---- Phase B: prepare all documents concurrently --------------------
-        ai_sem = asyncio.Semaphore(ai_concurrency)
-        prep_tasks = [
-            asyncio.create_task(
-                _prepare_documents(
-                    listing, _OUTPUT_DIR / _job_dirname(listing), ai_client, ai_sem,
-                )
-            )
-            for listing in candidates
-        ]
+        if not prep_tasks:
+            log.info("No new candidates found.")
+            db.finish_run(run_id, **stats)
+            return stats
 
-        # ---- Open browser now so it's ready when the first docs complete ----
+        # Wait for any still-running prep tasks before applying
+        await asyncio.gather(*prep_tasks.values(), return_exceptions=True)
+
+        # ---- Open browser once all docs are ready (or close to it) ----------
         browser = None
         pw = None
-        if not no_apply and not dry_run and candidates:
+        if not no_apply and not dry_run and prep_tasks:
             from playwright.async_api import async_playwright
             pw = await async_playwright().start()
             browser = await pw.chromium.launch(
@@ -602,12 +621,12 @@ async def run_pipeline(cfg: dict, dry_run: bool = False, no_apply: bool = False,
                 args=["--disable-blink-features=AutomationControlled"],
             )
 
-        # ---- Phase C: apply sequentially as each doc set becomes ready ------
-        log.info("Phase C: applying sequentially as documents become ready...")
+        # ---- Apply sequentially in order of completion ---------------------
+        log.info("Applying for %d listings...", len(prep_tasks))
         from applicator.ats.base import ApplicationStatus
         applied_count = 0
 
-        for coro in asyncio.as_completed(prep_tasks):
+        for coro in asyncio.as_completed(list(prep_tasks.values())):
             listing, cv_path, cl_path, pv_cv, pv_cl = await coro
 
             if cv_path is None:
@@ -771,7 +790,7 @@ async def run_single_url(url: str, cfg: dict, dry_run: bool = False) -> None:
     )
 
     from cv_editor.client import AIClient, AIConfig
-    ai_client = AIClient(AIConfig())
+    ai_client = AIClient(AIConfig.from_dict(cfg.get("ai", {})))
     job_dir = _OUTPUT_DIR / _job_dirname(listing)
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -780,7 +799,7 @@ async def run_single_url(url: str, cfg: dict, dry_run: bool = False) -> None:
     from cover_letter.compiler import compile_pdf
 
     cv_tex = await tailor_cv(listing, job_dir, ai_client)
-    cv_path = compile_pdf(cv_tex)
+    cv_path = compile_pdf(cv_tex, fit_one_page=True)
     cl_tex = await generate_cover_letter(listing, job_dir, ai_client)
     cl_path = compile_pdf(cl_tex)
 

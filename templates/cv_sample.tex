@@ -7,177 +7,116 @@
 %
 % templates/cv.tex is gitignored so your personal information stays local.
 %
-% IMPORTANT NOTES FOR THE AI EDITOR:
-%   - The subtitle line (YOUR JOB TITLE below) is patched programmatically
-%     before every AI call -- it will always match the job opening title.
-%   - The "X years of experience" phrase is also patched automatically from
-%     personal_info.json work_history -- keep exactly that phrasing.
-%   - Do NOT add a second \begin{document} or any content after \end{document}.
-%   - The AI will reorder bullet points and swap keywords; keep the overall
-%     structure (header -> summary -> EXPERIENCE -> SKILLS -> EDUCATION).
+% HOW TAILORING WORKS (keep these building blocks, the editor relies on them):
+%   - \newcommand{\jobtitle}{...} is set to the job opening title per job.
+%   - The text between "% @summary-begin" and "% @summary-end" is rewritten
+%     to target the job. Keep the phrase "N years of experience": the number
+%     is computed from personal_info.json work_history.
+%   - Every \resumeItem{...} bullet may be reworded and reordered within its
+%     role. Facts are never added: edits that introduce a technology or a
+%     number that is not already in your CV are discarded automatically.
+%   - Every \skillline{Category}{a, b, c} is reordered so the skills the job
+%     asks for come first. Items are never added or removed.
+%   - Write the full CV you would be happy to send; tailoring only re-weights
+%     it. Keep it to one page: the PDF step tightens spacing if it overflows.
 % =============================================================================
 
-\documentclass[letterpaper,11pt]{article}
+\documentclass[a4paper,11pt]{article}
 
-\usepackage{latexsym}
-\usepackage{geometry}
-\geometry{margin=0.75in,top=0.5in,bottom=0.5in}
+\usepackage[a4paper,left=0.6in,right=0.6in,top=0.5in,bottom=0.5in]{geometry}
 \usepackage{titlesec}
-\usepackage{marvosym}
-\usepackage[usenames,dvipsnames]{color}
-\usepackage{verbatim}
 \usepackage{enumitem}
-\usepackage[hidelinks]{hyperref}
-\usepackage{fancyhdr}
-\usepackage[english]{babel}
 \usepackage{tabularx}
-
-
-\pagestyle{fancy}
-\fancyhf{}
-\renewcommand{\headrulewidth}{0pt}
-\renewcommand{\footrulewidth}{0pt}
-
-\addtolength{\oddsidemargin}{-0.5in}
-\addtolength{\evensidemargin}{-0.5in}
-\addtolength{\textwidth}{1in}
-\addtolength{\topmargin}{-.6in}
-\addtolength{\textheight}{1.1in}
-
-
+\usepackage[hidelinks]{hyperref}
+\usepackage[english]{babel}
 \usepackage[T1]{fontenc}
-\usepackage[]{charter}
+\usepackage{charter}
 
-
+\pagestyle{empty}
 \urlstyle{same}
-
-\raggedbottom
 \raggedright
-\setlength{\tabcolsep}{0in}
+\raggedbottom
+\setlength{\parindent}{0pt}
+\setlength{\tabcolsep}{0pt}
 
-\titleformat{\section}{
-  \vspace{-7pt}\scshape\raggedright\large
-}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+% Section heading: small caps, rule underneath, compact spacing.
+\titleformat{\section}{\large\scshape\raggedright}{}{0em}{}[\titlerule]
+\titlespacing*{\section}{0pt}{8pt}{4pt}
 
-
-\newcommand{\MYhref}[3][blue]{\href{#2}{\color{#1}{#3}}}
-\newcommand{\MYhrefBlack}[3][black]{\href{#2}{\color{#1}{#3}}}
-
-\newcommand{\resumeItem}[2]{
-  \item\small{
-    \textbf{#1}{: #2 \vspace{-2pt}}
-  }
+% \resumeSubheading{Company}{Location}{Role}{Dates}
+\newcommand{\resumeSubheading}[4]{%
+  \item
+  \begin{tabular*}{\textwidth}{@{}l@{\extracolsep{\fill}}r@{}}
+    \textbf{#1} & #2 \\
+    \textit{#3} & \textit{\small #4} \\
+  \end{tabular*}\vspace{-3pt}%
 }
-
-\newcommand{\curItem}[1]{
-  \item\small{ #1
-    }
-}
-
-\newcommand{\resumeSubheadingSimple}[4]{
-  \vspace{-1pt}
-    \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
-      \textbf{#1} & \textbf{#2} \\
-      \textit{\small#3} & \textit{\small #4} \\
-    \end{tabular*}\vspace{-10pt}
-}
-
-\newcommand{\award}[2]{
-  \vspace{-1pt}
-    \begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
-      \textbf{#1} & \textbf{#2} \\
-    \end{tabular*}\vspace{-3pt}
-}
-
-\newcommand{\resumeSubheading}[4]{
-  \vspace{-1pt}\item
-    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
-      \textbf{#1} & \textbf{#2} \\
-      \textit{\small#3} & \textit{\small #4} \\
-    \end{tabular*}\vspace{-5pt}
-}
-
-\newcommand{\resumeSubItem}[2]{\resumeItem{#1}{#2}\vspace{-4pt}}
-
-\renewcommand{\labelitemii}{$\circ$}
-
-\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=7mm]}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0pt,label={},itemsep=4pt,topsep=0pt]}
 \newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
-\newcommand{\resumeItemListStart}{\begin{itemize}[itemsep=-1mm,leftmargin=7mm]}
+
+% One bullet of an experience entry.
+\newcommand{\resumeItem}[1]{\item\small{#1}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=12pt,label={\raisebox{0.15ex}{\scriptsize$\bullet$}},itemsep=0pt,topsep=2pt,parsep=1pt]}
 \newcommand{\resumeItemListEnd}{\end{itemize}}
 
-\newcommand{\mySkip}[0]{
-    \smallskip
-    \smallskip
-    \smallskip
-}
+% One row of the skills table: \skillline{Category}{item, item, item}
+\newcommand{\skillline}[2]{\textbf{#1} & #2 \\}
 
-
-
+% Set per job by the CV editor.
+\newcommand{\jobtitle}{YOUR JOB TITLE}
 
 \begin{document}
 
 % --- Header ------------------------------------------------------------------
-% The subtitle (YOUR JOB TITLE) is overwritten programmatically per job.
-\begin{tabular*}{\textwidth}{l@{\extracolsep{\fill}}r}
-  \textbf{\huge YOUR FULL NAME} & Email: your.email@example.com\\
-    YOUR JOB TITLE & { +1 555 000 0000} \textcolor{blue}{\href{https://linkedin.com/in/yourprofile}{ Linkedin}}
-    \smallskip
-    \smallskip
-    \smallskip
-\end{tabular*}
+\begin{center}
+  {\LARGE\bfseries YOUR FULL NAME}\\[3pt]
+  {\large \jobtitle}\\[3pt]
+  \small City, Country
+  \enspace$\cdot$\enspace \href{mailto:your.email@example.com}{your.email@example.com}
+  \enspace$\cdot$\enspace +1 555 000 0000
+  \enspace$\cdot$\enspace \href{https://linkedin.com/in/yourprofile}{linkedin.com/in/yourprofile}
+\end{center}
 
 % --- Summary -----------------------------------------------------------------
-% Keep the phrase "X years of experience" -- it is patched automatically.
-YOUR TITLE with 0 years of experience, having worked in [brief background].
-[One or two more sentences covering key skills and strengths.]
+\section{Summary}
+% @summary-begin
+Software Engineer with 0 years of experience building backend services and
+cloud infrastructure. Comfortable owning a service from design to production
+on-call, with a focus on reliability and clear documentation.
+% @summary-end
 
 % --- Experience --------------------------------------------------------------
-\section{EXPERIENCE}
-\resumeSubheadingSimple
-  {Company Name}{City, Country or Remote}
-  {Your Role}{Month YYYY --- Month YYYY}
+\section{Experience}
+\resumeSubHeadingListStart
+  \resumeSubheading{Company Name}{City, Country or Remote}{Software Engineer}{Jan 2022 -- Present}
+  \resumeItemListStart
+    \resumeItem{Built and ran REST services in Python and PostgreSQL serving 40k daily users.}
+    \resumeItem{Moved deployments to Kubernetes with Terraform and GitHub Actions, cutting release time from 2 hours to 15 minutes.}
+    \resumeItem{Set up Prometheus and Grafana dashboards and alerts for the payments services.}
+  \resumeItemListEnd
 
-  \smallskip
-  \smallskip
-[Short paragraph describing your impact, technologies used, and scale.]
-  \smallskip
-  \smallskip
-
-\resumeSubheadingSimple
-  {Another Company}{City, Country or Remote}
-  {Your Role}{Month YYYY --- Month YYYY}
-
-  \smallskip
-  \smallskip
-[Short paragraph describing your impact, technologies used, and scale.]
-  \smallskip
-  \smallskip
+  \resumeSubheading{Another Company}{City, Country or Remote}{Junior DevOps Engineer}{Jun 2020 -- Dec 2021}
+  \resumeItemListStart
+    \resumeItem{Wrote Bash and Python tooling to automate AWS account setup.}
+    \resumeItem{Maintained Docker images and GitLab CI pipelines for 12 services.}
+  \resumeItemListEnd
+\resumeSubHeadingListEnd
 
 % --- Skills ------------------------------------------------------------------
-% Keep category labels on separate \textbf{} entries separated by \hspace{1em}.
-% The AI will swap keyword values; the structure must stay intact.
-\section{SKILLS}
-\begingroup
-\parindent=0pt
-\textbf{Languages}: English(C1) \hspace{1em}
-\textbf{Scripting}: Python, Bash \hspace{1em}
-\textbf{Cloud}: AWS, GCP \hspace{1em}
-\textbf{IaC}: Terraform \hspace{1em}
-\textbf{Containerization}: Docker, Kubernetes \hspace{1em}
-\textbf{CI/CD}: GitHub Actions, GitLab CI \hspace{1em}
-\textbf{Observability}: Prometheus, Grafana \hspace{1em}
-\textbf{Other}: add your own categories here
-\endgroup
+\section{Skills}
+\begin{tabularx}{\textwidth}{@{}l@{\hspace{1em}}X@{}}
+  \skillline{Languages}{Python, Go, Bash, SQL}
+  \skillline{Cloud}{AWS, GCP}
+  \skillline{Infrastructure}{Terraform, Docker, Kubernetes}
+  \skillline{CI/CD}{GitHub Actions, GitLab CI}
+  \skillline{Observability}{Prometheus, Grafana}
+  \skillline{Spoken}{English (C1)}
+\end{tabularx}
 
 % --- Education ---------------------------------------------------------------
-\section{EDUCATION}
-    \smallskip
-    \resumeSubheadingSimple
-      {Your University}{City, Country}
-      {Degree in Your Field}{ }
-    \mySkip
-\mySkip
-
+\section{Education}
+\resumeSubHeadingListStart
+  \resumeSubheading{Your University}{City, Country}{B.Sc. in Your Field}{2016 -- 2020}
+\resumeSubHeadingListEnd
 
 \end{document}

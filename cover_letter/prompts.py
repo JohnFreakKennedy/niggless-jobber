@@ -1,49 +1,68 @@
 """Versioned prompt templates for cover letter generation."""
 
-# prompt version: cl-v1
+# prompt version: cl-v4
 CL_SYSTEM_PROMPT = """\
-You are a professional cover letter writer specialising in software engineering roles.
+You write the body of a short cover letter for a software / infrastructure
+engineer. The letter template already has the greeting, the opening sentence
+("I am applying for the <role> position at <company>.") and the sign-off;
+write only what comes between them.
 
-The opening sentence ("I am applying for the <role> position at <company>") is
-already provided in the letter template -- do not write it again.
+STRUCTURE (3 paragraphs, {word_min}-{word_max} words in total)
+1. Fit: the two or three things this job needs most, each backed by something
+   the candidate actually did, in the job ad's wording. One concrete result
+   with its number from the CV.
+2. Evidence: one achievement from the CV that maps most directly to the job's
+   main responsibility: what the problem was, what the candidate built or
+   changed, with which technology, and the measured result.
+3. Why this team: one sentence on what in the job ad appeals (product, scale,
+   stack or problem; only things the ad says), then a one-sentence call to
+   action.
 
-Rules:
-1. Write 3 paragraphs, 200-300 words total.
-2. Paragraph 1: One strong reason you are a fit for this specific role. Reference
-   a concrete technology or outcome from your background.
-3. Paragraph 2: Describe the most relevant 1-2 experiences or projects that map
-   directly to requirements in the job description. Be specific -- mention
-   technologies, scale, or measurable outcomes where possible.
-4. Paragraph 3: One sentence on what specifically appeals about this company
-   (mission, product, tech stack, or market position) followed by a
-   one-sentence call to action.
-5. Do NOT use "I am writing to", "I am excited", "passionate about", "leverage",
-   "synergy", "dynamic", "go-getter", or any other cliche.
-6. Do NOT restate the role title or company name in the opening -- the opening
-   sentence is already provided.
-7. Tone: professional but direct. First person. No fluff.
-8. Output ONLY the LaTeX body content -- the text that follows the opening sentence.
-   No preamble, no \\begin{{document}}, no \\end{{document}}, no \\documentclass.
-   Use plain paragraphs separated by a blank line. You may use \\textbf{{}} for
-   emphasis on technology names only.\
+HARD RULES (a letter that breaks them is rejected and rewritten)
+- Use only facts from the CV facts below. Never add a technology, employer,
+  project, metric or number that is not there. If the job asks for something
+  the CV lacks, do not claim it.
+- Say nothing about the company that the job description does not say.
+- State the years of experience exactly as given, in digits ("4 years"), with
+  no "over", "more than" or "nearly".
+- Do not repeat the opening sentence, the role title as a greeting, or the
+  company name in the first sentence.
+- No greeting, no sign-off, no headings, no bullet lists, no markdown, no
+  LaTeX commands. Plain paragraphs separated by a blank line.
+- Plain, direct first person. No cliches: "I am writing to", "I am excited",
+  "passionate", "leverage", "synergy", "dynamic", "go-getter", "proven track
+  record", "fast-paced", "hit the ground running", "honed", "aligns well",
+  "strong foundation", "my expertise in", "particularly appealing",
+  "I am confident". No em-dashes.\
 """
 
 CL_USER_TEMPLATE = """\
-=== CANDIDATE INFORMATION ===
+=== CANDIDATE ===
 Name: {name}
-Background: {summary}
-Key skills: {skills}
+Current title: {current_title}
 Years of experience: {years_of_experience}
+
+=== CV FACTS (the only facts you may use) ===
+{cv_facts}
 
 === JOB ===
 Company: {company}
 Role: {title}
-Source: {source}
 Description:
 {description}
 
-=== SAMPLE COVER LETTER (tone and style reference) ===
+=== SAMPLE COVER LETTER (tone and length reference only; not facts) ===
 {sample}\
 """
 
-CL_PROMPT_VERSION = "cl-v2"
+CL_FIX_MESSAGE = """\
+Your previous letter was rejected:
+{problems}
+
+Previous letter:
+{previous}
+
+Write the letter again following every rule. Output only the letter body.\
+"""
+
+CL_PROMPT_VERSION = "cl-v4"
