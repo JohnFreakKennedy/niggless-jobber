@@ -96,6 +96,7 @@ ai:
   # ollama_base_url: http://localhost:11434   # env OLLAMA_HOST overrides this
   # ollama_num_ctx: 8192              # context window; CV + job text need ~6-8k tokens
   # request_timeout: 300              # seconds per request, any provider; local models are slow
+  # thinking_budget: 0                 # gemini only: 0 = off (Flash), -1 = model decides (Pro)
   # concurrency: 1                    # one request at a time suits a single GPU
 
   # Number of listings whose CV+cover letter are drafted simultaneously.

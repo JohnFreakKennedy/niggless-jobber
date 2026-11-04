@@ -60,8 +60,12 @@ class AIConfig:
     # Ollama (local models)
     ollama_base_url: str = _DEFAULT_OLLAMA_URL
     ollama_num_ctx: int = 8192
-    # HTTP timeout in seconds for local (Ollama) requests; local models are slow.
+    # Timeout in seconds for one request to any provider; local models are slow.
     request_timeout: float = 300.0
+    # Gemini "thinking" tokens count against max_tokens and can use all of it,
+    # leaving an empty reply. 0 turns thinking off (Flash models); -1 lets the
+    # model decide (needed for Pro models, which cannot turn it off).
+    thinking_budget: int = 0
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "AIConfig":
@@ -101,11 +105,31 @@ def _resolve_provider_model(cfg_provider: str, cfg_model: str) -> tuple[str, str
     return provider, model
 
 
+def _gemini_empty_reason(response) -> str:
+    """Why a Gemini reply has no text, in words a user can act on."""
+    feedback = getattr(response, "prompt_feedback", None)
+    block = getattr(feedback, "block_reason", None)
+    if block:
+        return f"the prompt was blocked ({block})"
+    candidates = getattr(response, "candidates", None) or []
+    finish = getattr(candidates[0], "finish_reason", None) if candidates else None
+    thoughts = getattr(getattr(response, "usage_metadata", None), "thoughts_token_count", None)
+    if finish is not None and "MAX_TOKENS" in str(finish):
+        if thoughts:
+            return (f"the output limit was reached after {thoughts} thinking tokens; "
+                    "raise ai.cv_max_tokens / cover_letter_max_tokens or lower ai.thinking_budget")
+        return "the output limit was reached; raise ai.cv_max_tokens / cover_letter_max_tokens"
+    return f"finish reason {finish}" if finish is not None else "no candidates returned"
+
+
 class AIClient:
     def __init__(self, config: AIConfig):
         self.config = config
         # Tests inject an ``httpx.MockTransport`` here; None = real network.
         self._transport: httpx.AsyncBaseTransport | None = None
+        # Gemini models that rejected a thinking setting; it is not sent again.
+        self._gemini_no_thinking: set[str] = set()
+        self._gemini_client = None
 
     def _get_key(self, provider: str) -> str:
         from storage.vault import get_secret
@@ -233,26 +257,53 @@ class AIClient:
         json_mode: bool = False,
     ) -> str:
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types as genai_types
         except ImportError:
-            raise RuntimeError(
-                "google-generativeai is not installed. "
-                "Run: pip install google-generativeai"
+            raise RuntimeError("google-genai is not installed. Run: pip install google-genai")
+        if self._gemini_client is None:
+            # One attempt: a 429 (quota used up) should fail fast and reach the
+            # fallback provider instead of being retried quietly for minutes.
+            self._gemini_client = genai.Client(
+                api_key=self._get_key("gemini"),
+                http_options=genai_types.HttpOptions(
+                    retry_options=genai_types.HttpRetryOptions(attempts=1),
+                ),
             )
-        genai.configure(api_key=self._get_key("gemini"))
+        client = self._gemini_client
         gen_kwargs: dict[str, Any] = {
+            "system_instruction": system_prompt,
             "max_output_tokens": max_tokens,
             "temperature": self.config.temperature,
         }
+        if model not in self._gemini_no_thinking:
+            gen_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=self.config.thinking_budget
+            )
         if json_mode:
             gen_kwargs["response_mime_type"] = "application/json"
-        gemini_model = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=system_prompt,
-            generation_config=genai.GenerationConfig(**gen_kwargs),
-        )
-        response = await gemini_model.generate_content_async(user_message)
-        return response.text or ""
+
+        async def generate():
+            return await client.aio.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=genai_types.GenerateContentConfig(**gen_kwargs),
+            )
+
+        try:
+            response = await generate()
+        except Exception as exc:
+            # Models without thinking (e.g. Flash-Lite) reject any thinking
+            # setting with a bare 400 INVALID_ARGUMENT; retry without it.
+            if getattr(exc, "code", None) != 400 or "thinking_config" not in gen_kwargs:
+                raise
+            log.info("gemini %r rejected the thinking setting; retrying without it", model)
+            gen_kwargs.pop("thinking_config")
+            response = await generate()
+            self._gemini_no_thinking.add(model)
+        if not response.text:
+            raise RuntimeError(f"gemini ({model!r}) returned no text: {_gemini_empty_reason(response)}")
+        return response.text
 
     # ------------------------------------------------------------------
     # Ollama (local models, no API key)

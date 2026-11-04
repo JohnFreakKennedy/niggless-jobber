@@ -372,35 +372,50 @@ async def test_openai_without_json_mode_has_no_response_format(fake_openai):
 
 
 # ----------------------------------------------------------------------
-# Gemini json_mode (fake google.generativeai module)
+# Gemini (fake google.genai client)
 # ----------------------------------------------------------------------
+def _fake_genai(monkeypatch, captured: dict, text: str = "{}"):
+    from google.genai import types as genai_types
+
+    class _Models:
+        async def generate_content(self, **kw):
+            captured["call"] = kw
+            return types.SimpleNamespace(text=text)
+
+    class _Client:
+        def __init__(self, **kw):
+            captured["client"] = kw
+            self.aio = types.SimpleNamespace(models=_Models())
+
+    import google.genai
+    monkeypatch.setattr(google.genai, "Client", _Client)
+    monkeypatch.setattr(AIClient, "_get_key", lambda self, provider: "k")
+    return genai_types
+
+
 async def test_gemini_json_mode_sets_mime_type(monkeypatch):
     captured: dict = {}
-
-    class _Model:
-        def __init__(self, **kw):
-            captured["model_kwargs"] = kw
-
-        async def generate_content_async(self, msg):
-            return types.SimpleNamespace(text="{}")
-
-    def _gen_config(**kw):
-        captured["gen"] = kw
-        return kw
-
-    genai = types.ModuleType("google.generativeai")
-    genai.configure = lambda **kw: None
-    genai.GenerativeModel = _Model
-    genai.GenerationConfig = _gen_config
-    google = types.ModuleType("google")
-    google.generativeai = genai
-    monkeypatch.setitem(sys.modules, "google", google)
-    monkeypatch.setitem(sys.modules, "google.generativeai", genai)
-    monkeypatch.setattr(AIClient, "_get_key", lambda self, provider: "k")
-
+    _fake_genai(monkeypatch, captured)
     cfg = AIConfig(provider="gemini", model="gemini-3.8-flash", fallback_provider="none")
     assert await AIClient(cfg).complete("s", "u", json_mode=True) == "{}"
-    assert captured["gen"]["response_mime_type"] == "application/json"
+    assert captured["call"]["config"].response_mime_type == "application/json"
+
+
+async def test_gemini_request_shape(monkeypatch):
+    captured: dict = {}
+    _fake_genai(monkeypatch, captured, text="hello")
+    cfg = AIConfig(provider="gemini", model="gemini-3.8-flash", fallback_provider="none",
+                   temperature=0.2)
+    assert await AIClient(cfg).complete("system text", "user text", max_tokens=123) == "hello"
+    call = captured["call"]
+    assert call["model"] == "gemini-3.8-flash"
+    assert call["contents"] == "user text"
+    assert call["config"].system_instruction == "system text"
+    assert call["config"].max_output_tokens == 123
+    assert call["config"].temperature == 0.2
+    assert call["config"].response_mime_type is None
+    assert captured["client"]["api_key"] == "k"
+    assert captured["client"]["http_options"].retry_options.attempts == 1
 
 
 async def test_hosted_call_that_hangs_times_out(monkeypatch):
@@ -416,3 +431,100 @@ async def test_hosted_call_that_hangs_times_out(monkeypatch):
     monkeypatch.setattr(client, "_call_openai", hang)
     with pytest.raises(RuntimeError, match="did not answer within"):
         await client.complete("sys", "user")
+
+
+async def test_gemini_thinking_budget_sent(monkeypatch):
+    captured: dict = {}
+    _fake_genai(monkeypatch, captured)
+    cfg = AIConfig(provider="gemini", model="gemini-3.8-flash", fallback_provider="none")
+    await AIClient(cfg).complete("s", "u")
+    assert captured["call"]["config"].thinking_config.thinking_budget == 0
+    cfg = AIConfig.from_dict({"provider": "gemini", "thinking_budget": -1, "fallback_provider": None})
+    await AIClient(cfg).complete("s", "u")
+    assert captured["call"]["config"].thinking_config.thinking_budget == -1
+
+
+async def test_gemini_empty_reply_raises(monkeypatch):
+    captured: dict = {}
+    _fake_genai(monkeypatch, captured, text="")
+    cfg = AIConfig(provider="gemini", model="gemini-3.8-flash", fallback_provider="none")
+    with pytest.raises(RuntimeError, match="returned no text"):
+        await AIClient(cfg).complete("s", "u")
+
+
+async def test_gemini_retries_without_thinking_on_400(monkeypatch):
+    calls: list = []
+
+    class _Err(Exception):
+        code = 400
+
+    class _Models:
+        async def generate_content(self, **kw):
+            calls.append(kw["config"].thinking_config)
+            if kw["config"].thinking_config is not None:
+                raise _Err("400 INVALID_ARGUMENT")
+            return types.SimpleNamespace(text="ok")
+
+    class _Client:
+        def __init__(self, **kw):
+            self.aio = types.SimpleNamespace(models=_Models())
+
+    import google.genai
+    monkeypatch.setattr(google.genai, "Client", _Client)
+    monkeypatch.setattr(AIClient, "_get_key", lambda self, provider: "k")
+    cfg = AIConfig(provider="gemini", model="gemini-flash-lite-latest", fallback_provider="none")
+    client = AIClient(cfg)
+    assert await client.complete("s", "u") == "ok"
+    assert calls[0] is not None and calls[1] is None
+    # Remembered: the second request goes out without the thinking setting.
+    assert await client.complete("s", "u") == "ok"
+    assert len(calls) == 3 and calls[2] is None
+
+
+async def test_gemini_other_errors_not_retried(monkeypatch):
+    calls: list = []
+
+    class _Err(Exception):
+        code = 429
+
+    class _Models:
+        async def generate_content(self, **kw):
+            calls.append(1)
+            raise _Err("429 RESOURCE_EXHAUSTED")
+
+    class _Client:
+        def __init__(self, **kw):
+            self.aio = types.SimpleNamespace(models=_Models())
+
+    import google.genai
+    monkeypatch.setattr(google.genai, "Client", _Client)
+    monkeypatch.setattr(AIClient, "_get_key", lambda self, provider: "k")
+    cfg = AIConfig(provider="gemini", model="gemini-3.8-flash", fallback_provider="none")
+    with pytest.raises(_Err):
+        await AIClient(cfg).complete("s", "u")
+    assert calls == [1]
+
+
+def test_gemini_empty_reason_messages():
+    from cv_editor.client import _gemini_empty_reason
+    ns = types.SimpleNamespace
+    blocked = ns(prompt_feedback=ns(block_reason="SAFETY"), candidates=[], usage_metadata=None)
+    assert "blocked (SAFETY)" in _gemini_empty_reason(blocked)
+    capped = ns(prompt_feedback=None, candidates=[ns(finish_reason="FinishReason.MAX_TOKENS")],
+                usage_metadata=ns(thoughts_token_count=46))
+    assert "46 thinking tokens" in _gemini_empty_reason(capped)
+    assert _gemini_empty_reason(ns(prompt_feedback=None, candidates=[], usage_metadata=None)) == \
+        "no candidates returned"
+
+
+async def test_gemini_client_reused(monkeypatch):
+    captured: dict = {}
+    made: list = []
+    _fake_genai(monkeypatch, captured, text="ok")
+    import google.genai
+    real = google.genai.Client
+    monkeypatch.setattr(google.genai, "Client", lambda **kw: made.append(1) or real(**kw))
+    client = AIClient(AIConfig(provider="gemini", model="gemini-3.8-flash", fallback_provider="none"))
+    await client.complete("s", "u")
+    await client.complete("s", "u")
+    assert made == [1]

@@ -85,6 +85,15 @@ Run `ollama serve` and `ollama pull <model>` first. If Ollama is not reachable t
 whether `ollama serve` is running; an HTTP 404 means the model is not pulled and the error
 prints the `ollama pull` command.
 
+### Gemini
+
+Gemini uses the `google-genai` library (the older `google-generativeai` is end-of-life). The
+library's own retries are off, so a quota error (429) fails at once and goes to the fallback
+provider. Gemini's "thinking" tokens count against the output limit and can leave an empty
+reply, so `thinking_budget` defaults to `0` (off). Pro models cannot turn thinking off: set
+`thinking_budget: -1` for them. Models with no thinking support (Flash-Lite) reject the setting;
+the client then repeats the call without it and stops sending it to that model.
+
 ---
 
 ## CV Tailoring
