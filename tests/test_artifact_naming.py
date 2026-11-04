@@ -146,7 +146,8 @@ class TestCoverLetterFilename:
         mock_client = MagicMock()
         mock_client.config = MagicMock(cover_letter_max_tokens=1024)
         mock_client.complete = AsyncMock(
-            return_value="Dear Hiring Manager, I am excited to apply."
+            # A plain letter long enough to pass the length check.
+            return_value=" ".join(["I build and run services for product teams."] * 22)
         )
 
         result = await generate_cover_letter(listing, tmp_path, mock_client)

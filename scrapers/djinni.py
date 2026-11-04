@@ -50,6 +50,7 @@ class DjinniScraper(BaseScraper):
             log.error("playwright not installed; skipping Djinni scraper")
             return []
 
+        seen_urls: set[str] = set()
         results: list[dict] = []
         async with async_playwright() as pw:
             from scrapers.google_auth import make_context
@@ -73,7 +74,17 @@ class DjinniScraper(BaseScraper):
                 await self._login(page, ctx)
 
             for keyword in self.keywords:
+                if len(results) >= self.max_results:
+                    break
+                empty_streak = 0
+
                 for location in self.locations:
+                    if len(results) >= self.max_results:
+                        break
+                    if empty_streak >= 3:
+                        log.info("Djinni: 3 empty locations for %r -- moving on", keyword)
+                        break
+
                     params: dict = {"primary_keyword": keyword.split()[0]}
                     if location.lower() not in ("remote", ""):
                         params["region"] = location
@@ -81,6 +92,7 @@ class DjinniScraper(BaseScraper):
                         params["employment"] = "remote"
                     search_url = _JOBS_URL + "?" + urllib.parse.urlencode(params)
                     page_num = 1
+                    new_this_location = 0
 
                     while len(results) < self.max_results:
                         url = search_url + (f"&page={page_num}" if page_num > 1 else "")
@@ -88,21 +100,37 @@ class DjinniScraper(BaseScraper):
                             await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                             html = await page.content()
                             listings, has_next = self._parse_list(html)
+                            added = 0
                             for listing in listings:
                                 if len(results) >= self.max_results:
                                     break
-                                detail = await self._fetch_detail(page, _BASE + listing["url"])
+                                full_url = _BASE + listing["url"]
+                                if full_url in seen_urls:
+                                    continue
+                                seen_urls.add(full_url)
+                                detail = await self._fetch_detail(page, full_url)
                                 listing["description"] = detail["description"]
-                                listing["apply_url"] = detail["apply_url"] or (_BASE + listing["url"])
-                                listing["url"] = _BASE + listing["url"]
+                                listing["apply_url"] = detail["apply_url"] or full_url
+                                listing["url"] = full_url
                                 results.append(listing)
+                                added += 1
+                                new_this_location += 1
                                 await asyncio.sleep(random.uniform(_DELAY_MIN, _DELAY_MAX))
-                            if not has_next:
+                            if not has_next or added == 0:
                                 break
                             page_num += 1
                         except Exception as exc:
                             log.error("Djinni search error: %s", exc)
                             break
+
+                    if new_this_location == 0:
+                        empty_streak += 1
+                    else:
+                        empty_streak = 0
+                    log.info(
+                        "Djinni: %d new from keyword=%r location=%r (%d total)",
+                        new_this_location, keyword, location, len(results),
+                    )
 
             await ctx.close()
             if browser:

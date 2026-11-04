@@ -1,112 +1,179 @@
-"""Tests that tailor_cv enforces job title and years after AI output."""
+"""tailor_cv always shows listing.title and the computed years, whatever the AI returns."""
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from cv_editor.editor import patch_job_title_in_tex, patch_years_in_tex
+from cv_editor.client import AIClient, AIConfig
+from cv_editor.editor import tailor_cv
+from parser.schema import JobListing
 
-# Read the real base CV template so AI-mock output has the same structure
-# (small fraction of lines differ => diff guard does NOT fire, which lets us
-# verify the post-patch rather than the revert-to-pre-patched fallback).
-_REAL_BASE = (Path(__file__).parent.parent / "templates" / "cv.tex").read_text(encoding="utf-8")
+# Fictional template in the cv_sample.tex format.
+_TEMPLATE = r"""\documentclass[a4paper,11pt]{article}
+\newcommand{\resumeSubheading}[4]{\item \textbf{#1} #2 \textit{#3} #4}
+\newcommand{\resumeItem}[1]{\item\small{#1}}
+\newcommand{\skillline}[2]{\textbf{#1} & #2 \\}
+% Old title kept for reference: \newcommand{\jobtitle}{Commented Title}
+% \newcommand{\jobtitle}{Commented Title}
+\newcommand{\jobtitle}{Placeholder Title}
+
+\begin{document}
+{\LARGE Sample Person}\\ {\large \jobtitle}
+
+\section{Summary}
+% @summary-begin
+Backend Developer with 3 years of experience running web services on Kubernetes
+and Terraform for small product teams.
+% @summary-end
+
+\section{Experience}
+\begin{itemize}
+  \resumeSubheading{Example Labs}{Remote}{Backend Developer}{2021 -- 2026}
+  \begin{itemize}
+    \resumeItem{Ran Kubernetes clusters for 10 services with Terraform modules.}
+    \resumeItem{Wrote Python jobs that clean billing data every night.}
+  \end{itemize}
+\end{itemize}
+
+\section{Skills}
+\begin{tabular}{ll}
+  \skillline{Infrastructure}{Terraform, Kubernetes}
+  \skillline{Languages}{Python, Bash}
+\end{tabular}
+\end{document}
+"""
+
+# An older template: subtitle on the second row of a header tabular, nothing tailorable.
+_LEGACY_TEMPLATE = r"""\documentclass{article}
+\begin{document}
+\begin{tabular*}{\textwidth}{l@{\extracolsep{\fill}}r}
+  \textbf{\huge Sample Person} & Email: person@example.com\\
+    Software Engineer & { +1 555 000 0000} Linkedin
+\end{tabular*}
+
+Sample is a Software Engineer with 9 years of experience in cloud infrastructure.
+\end{document}
+"""
+
+_WORK_HISTORY = {"work_history": [{"start": "2021-01", "end": "2026-01", "title": "Backend Developer"}]}
+
+_JD = json.dumps({
+    "required_skills": ["Kubernetes", "Terraform"],
+    "preferred_skills": [],
+    "seniority_level": "mid",
+    "responsibilities": ["run clusters"],
+    "keywords": [],
+})
 
 
-def _make_listing(title: str = "DevOps Engineer", company: str = "Acme"):
-    return SimpleNamespace(
-        id="abc123456789",
-        title=title,
-        company=company,
-        description="5 years of experience required",
-        skills=["kubernetes", "terraform"],
-        source="linkedin",
+def _listing(title: str = "Platform Engineer", company: str = "Sample Co") -> JobListing:
+    return JobListing(
+        source="test", title=title, company=company,
+        url="https://example.com/jobs/1", apply_url="https://example.com/jobs/1/apply",
+        description="We run Kubernetes and Terraform. 5 years of experience required.",
+        skills=["Kubernetes", "Terraform"],
     )
 
 
-def _ai_output_with_subtitle(subtitle: str) -> str:
-    """Return the real base CV with just the subtitle line swapped out."""
-    return patch_job_title_in_tex(_REAL_BASE, subtitle)
+def _client(*responses) -> AsyncMock:
+    client = AsyncMock(spec=AIClient)
+    client.complete = AsyncMock(side_effect=list(responses))
+    client.config = AIConfig()
+    return client
 
 
-# ---------------------------------------------------------------------------
-# Post-AI enforcement: job title
-# ---------------------------------------------------------------------------
+async def _run(tmp_path, listing, client, template=_TEMPLATE):
+    base = tmp_path / "base_cv.tex"
+    base.write_text(template, encoding="utf-8")
+    out_dir = tmp_path / "out"
+    with patch("cv_editor.editor._resolve_base_cv", return_value=base), \
+         patch("cv_editor.editor._load_personal_info", return_value=_WORK_HISTORY):
+        path = await tailor_cv(listing, out_dir, client)
+    return path, path.read_text(encoding="utf-8")
+
+
+class TestCallContract:
+    async def test_complete_called_with_json_mode(self, tmp_path):
+        client = _client(_JD, json.dumps({}))
+        await _run(tmp_path, _listing(), client)
+        assert client.complete.await_count == 2
+        for call in client.complete.await_args_list:
+            system, user = call.args
+            assert isinstance(system, str) and isinstance(user, str)
+            assert call.kwargs["json_mode"] is True
+            assert isinstance(call.kwargs["max_tokens"], int)
+        assert client.complete.await_args_list[1].kwargs["max_tokens"] == AIConfig().cv_max_tokens
+
 
 class TestPostPatchJobTitle:
-    """
-    The AI is allowed to return any subtitle.
-    tailor_cv must overwrite it with listing.title regardless.
-    """
+    async def test_title_set_from_listing(self, tmp_path):
+        path, content = await _run(tmp_path, _listing("Platform Engineer"), _client(_JD, "{}"))
+        assert path.name == "Sample_Co_cv.tex"
+        assert "\\newcommand{\\jobtitle}{Platform Engineer}" in content
+        assert "Placeholder Title" not in content
 
-    @pytest.mark.asyncio
-    async def test_ai_company_name_overridden_with_job_title(self, tmp_path):
-        """AI puts company name as subtitle -- must be replaced with job title."""
-        # AI output: real template with "Jit Team" as subtitle (only ~1 line diff
-        # from pre-patched, so the diff guard does NOT revert to pre-patched)
-        ai_output = _ai_output_with_subtitle("Jit Team")
+    async def test_comment_lines_untouched(self, tmp_path):
+        _, content = await _run(tmp_path, _listing("SRE"), _client(_JD, "{}"))
+        assert "% \\newcommand{\\jobtitle}{Commented Title}" in content
+        assert "% Old title kept for reference: \\newcommand{\\jobtitle}{Commented Title}" in content
+        assert content.count("\\newcommand{\\jobtitle}{SRE}") == 1
 
-        from cv_editor.client import AIClient, AIConfig
-        mock_client = AsyncMock(spec=AIClient)
-        mock_client.complete = AsyncMock(return_value=ai_output)
-        mock_client.config = AIConfig()
-
-        from cv_editor.editor import tailor_cv
-        with patch("cv_editor.editor._load_personal_info", return_value={"work_history": [
-            {"start": "2021-01", "end": "2026-01"}
-        ]}):
-            tex_path = await tailor_cv(_make_listing(title="Platform Engineer"), tmp_path, mock_client)
-
-        content = tex_path.read_text(encoding="utf-8")
-        assert "Platform Engineer" in content, "Job title must appear in final CV"
-        assert "Jit Team" not in content, "Company name must not appear as subtitle"
-
-    @pytest.mark.asyncio
-    async def test_ai_arbitrary_subtitle_overridden(self, tmp_path):
-        """AI writes random text as subtitle -- overridden with listing.title."""
-        ai_output = _ai_output_with_subtitle("Senior Anything")
-
-        from cv_editor.client import AIClient, AIConfig
-        mock_client = AsyncMock(spec=AIClient)
-        mock_client.complete = AsyncMock(return_value=ai_output)
-        mock_client.config = AIConfig()
-
-        from cv_editor.editor import tailor_cv
-        with patch("cv_editor.editor._load_personal_info", return_value={"work_history": [
-            {"start": "2021-01", "end": "2026-01"}
-        ]}):
-            tex_path = await tailor_cv(_make_listing(title="SRE"), tmp_path, mock_client)
-
-        content = tex_path.read_text(encoding="utf-8")
-        assert "SRE" in content
+    async def test_ai_cannot_change_title(self, tmp_path):
+        edits = {
+            "summary": "Staff Platform Engineer with 5 years of experience running web services on "
+                       "Kubernetes and Terraform for small product teams.",
+            "bullets": {
+                "b1": "\\renewcommand{\\jobtitle}{Senior Anything} Ran Kubernetes clusters for 10 services.",
+                "b2": "Wrote Python jobs that clean billing data every night for Jit Team.",
+            },
+        }
+        _, content = await _run(tmp_path, _listing("SRE"), _client(_JD, json.dumps(edits)))
+        assert "\\newcommand{\\jobtitle}{SRE}" in content
         assert "Senior Anything" not in content
+        assert "\\renewcommand" not in content
+        assert "Staff" not in content
+        # The rest of the edit set still applies.
+        assert "Platform Engineer with 5 years of experience" in content
 
+    async def test_title_latex_escaped(self, tmp_path):
+        _, content = await _run(tmp_path, _listing("C# & .NET Developer_2 {x}"), _client(_JD, "{}"))
+        assert "\\newcommand{\\jobtitle}{C\\# \\& .NET Developer\\_2 x}" in content
 
-# ---------------------------------------------------------------------------
-# Post-AI enforcement: years of experience
-# ---------------------------------------------------------------------------
+    async def test_legacy_tabular_title_and_years_without_ai(self, tmp_path):
+        client = _client()
+        _, content = await _run(tmp_path, _listing("Cloud Engineer"), client, template=_LEGACY_TEMPLATE)
+        assert "\n    Cloud Engineer" in content
+        assert "    Software Engineer &" not in content
+        assert "5 years of experience" in content
+        assert "9 years" not in content
+        client.complete.assert_not_awaited()
+
 
 class TestPostPatchYears:
-    @pytest.mark.asyncio
-    async def test_ai_wrong_years_corrected(self, tmp_path):
-        """AI writes wrong years in summary -- post-patch corrects it."""
-        # Produce a realistic AI output: same as real template but with wrong years
-        ai_output = patch_years_in_tex(_REAL_BASE, "10")
-
-        from cv_editor.client import AIClient, AIConfig
-        mock_client = AsyncMock(spec=AIClient)
-        mock_client.complete = AsyncMock(return_value=ai_output)
-        mock_client.config = AIConfig()
-
-        from cv_editor.editor import tailor_cv
-        with patch("cv_editor.editor._load_personal_info", return_value={"work_history": [
-            {"start": "2021-01", "end": "2026-01"}
-        ]}):
-            tex_path = await tailor_cv(_make_listing(), tmp_path, mock_client)
-
-        content = tex_path.read_text(encoding="utf-8")
-        # "10 years" must be gone; actual ~5 years should be present
-        assert "10 years of experience" not in content
+    async def test_template_years_corrected(self, tmp_path):
+        _, content = await _run(tmp_path, _listing(), _client(_JD, "{}"))
         assert "5 years of experience" in content
+        assert "3 years of experience" not in content
+
+    async def test_ai_wrong_years_corrected(self, tmp_path):
+        # "10" exists elsewhere in the CV, so the summary passes the number check and
+        # only the deterministic post-patch can correct it.
+        edits = {"summary": "Backend Developer with 10 years of experience running 10 web services on "
+                            "Kubernetes and Terraform for small product teams."}
+        path, content = await _run(tmp_path, _listing(), _client(_JD, json.dumps(edits)))
+        assert "10 years of experience" not in content
+        # A summary claiming the wrong years is discarded; the original stays,
+        # with the computed years.
+        assert "5 years of experience" in content
+        report = json.loads(path.with_name("Sample_Co_cv_tailoring.json").read_text())
+        assert report["edited_units"] == []
+        assert any("claims 10 years" in r["reason"] for r in report["rejected"])
+
+    @pytest.mark.parametrize("phrase", ["over 12 years of experience", "more than 7 years of experience",
+                                        "8+ years of experience"])
+    async def test_ai_years_variants_corrected(self, tmp_path, phrase):
+        edits = {"bullets": {"b1": f"Ran Kubernetes clusters for 10 services with Terraform modules, {phrase}."}}
+        _, content = await _run(tmp_path, _listing(), _client(_JD, json.dumps(edits)))
+        assert phrase not in content

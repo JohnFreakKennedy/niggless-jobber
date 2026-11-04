@@ -11,7 +11,7 @@ from cv_editor.editor import patch_job_title_in_tex
 
 _HEADER = r"""
 \begin{tabular*}{\textwidth}{l@{\extracolsep{\fill}}r}
-  \textbf{\huge Jane Sample} & Email: foo@bar.com\\
+  \textbf{\huge Jane Sample} & Email: jane@example.com\\
     Cloud Software Engineer & { +1 555 000 0000} Linkedin
     \smallskip
 \end{tabular*}
@@ -27,7 +27,7 @@ class TestPatchJobTitleInTex:
     def test_other_content_unchanged(self):
         result = patch_job_title_in_tex(_HEADER, "SRE")
         assert r"\textbf{\huge Jane Sample}" in result
-        assert "foo@bar.com" in result
+        assert "jane@example.com" in result
         assert "+1 555 000 0000" in result
 
     def test_no_match_returns_unchanged(self):

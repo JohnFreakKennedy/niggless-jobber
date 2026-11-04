@@ -61,19 +61,22 @@ application:
 # AI pipeline
 # ---------------------------------------------------------------------------
 ai:
-  # Primary provider: openai | anthropic | gemini
+  # Primary provider: openai | anthropic | gemini | ollama
+  #   ollama = a local model served by Ollama (https://ollama.com); no API key.
+  # Env overrides: NIGGLESS_AI_PROVIDER, NIGGLESS_AI_MODEL. If only the provider
+  # is overridden, that provider's default model is used.
   provider: openai
 
   # Model name for the primary provider.
   model: gpt-4o
 
-  # Optional fallback if the primary provider fails.
+  # Optional fallback if the primary provider fails.  Use "none" to disable.
   fallback_provider: anthropic
   fallback_model: claude-3-5-sonnet-20241022
 
   # Optional second fallback.
   # fallback2_provider: gemini
-  # fallback2_model: gemini-2.0-flash
+  # fallback2_model: gemini-3.8-flash
 
   # Lower = more deterministic output (recommended for CV tailoring).
   temperature: 0.3
@@ -81,6 +84,20 @@ ai:
   # Maximum tokens per AI response.
   cv_max_tokens: 4096
   cover_letter_max_tokens: 1024
+
+  # --- Running fully local with Ollama ------------------------------------
+  # 1. Install Ollama and start it:   ollama serve
+  # 2. Download a model once:         ollama pull llama3.1:8b
+  # 3. Replace the provider/model/fallback keys above with:
+  #
+  # provider: ollama
+  # model: llama3.1:8b
+  # fallback_provider: none           # no cloud fallback, nothing leaves the machine
+  # ollama_base_url: http://localhost:11434   # env OLLAMA_HOST overrides this
+  # ollama_num_ctx: 8192              # context window; CV + job text need ~6-8k tokens
+  # request_timeout: 300              # seconds per request, any provider; local models are slow
+  # thinking_budget: 0                 # gemini only: 0 = off (Flash), -1 = model decides (Pro)
+  # concurrency: 1                    # one request at a time suits a single GPU
 
   # Number of listings whose CV+cover letter are drafted simultaneously.
   # Higher = faster overall but more parallel API requests (watch rate limits).
