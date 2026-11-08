@@ -28,6 +28,7 @@ class DouScraper(BaseScraper):
             log.error("playwright not installed; skipping Dou scraper")
             return []
 
+        seen_urls: set[str] = set()
         results: list[dict] = []
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -40,13 +41,24 @@ class DouScraper(BaseScraper):
             page = await ctx.new_page()
 
             for keyword in self.keywords:
+                if len(results) >= self.max_results:
+                    break
+                empty_streak = 0
+
                 for location in self.locations:
+                    if len(results) >= self.max_results:
+                        break
+                    if empty_streak >= 3:
+                        log.info("Dou: 3 empty locations for %r -- moving on", keyword)
+                        break
+
                     params: dict = {"search": keyword}
                     if location.lower() != "remote":
                         params["city"] = location
                     else:
                         params["remote"] = "remote"
                     url = _BASE_URL + "?" + urllib.parse.urlencode(params)
+                    new_this_location = 0
                     try:
                         await page.goto(url, wait_until="networkidle", timeout=30_000)
                         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -56,12 +68,25 @@ class DouScraper(BaseScraper):
                         for listing in listings:
                             if len(results) >= self.max_results:
                                 break
+                            if listing["url"] in seen_urls:
+                                continue
+                            seen_urls.add(listing["url"])
                             detail = await self._fetch_detail(page, listing["url"])
                             listing["description"] = detail
                             results.append(listing)
+                            new_this_location += 1
                             await asyncio.sleep(random.uniform(_DELAY_MIN, _DELAY_MAX))
                     except Exception as exc:
                         log.error("Dou scrape error for %r: %s", url, exc)
+
+                    if new_this_location == 0:
+                        empty_streak += 1
+                    else:
+                        empty_streak = 0
+                    log.info(
+                        "Dou: %d new from keyword=%r location=%r (%d total)",
+                        new_this_location, keyword, location, len(results),
+                    )
 
             await browser.close()
         return results[:self.max_results]

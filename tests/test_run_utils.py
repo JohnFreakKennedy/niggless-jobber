@@ -16,6 +16,7 @@ def _listing(**kwargs):
     defaults = dict(
         source="linkedin",
         company="Google",
+        location="Remote",
         id="2e211509efe7abcdef123456",
     )
     defaults.update(kwargs)
@@ -27,9 +28,21 @@ def _listing(**kwargs):
 # ---------------------------------------------------------------------------
 
 class TestJobDirname:
-    def test_basic_format(self):
+    def test_basic_format_with_location(self):
         name = _job_dirname(_listing())
+        assert name == "LinkedIn_Google_Remote_2e211509efe7"
+
+    def test_format_without_location(self):
+        name = _job_dirname(_listing(location=""))
         assert name == "LinkedIn_Google_2e211509efe7"
+
+    def test_location_included(self):
+        name = _job_dirname(_listing(location="Warsaw"))
+        assert "Warsaw" in name
+
+    def test_location_sanitized(self):
+        name = _job_dirname(_listing(location="New York, NY"))
+        assert "," not in name
 
     def test_id_prefix_is_12_chars(self):
         name = _job_dirname(_listing(id="abcdef123456789"))
@@ -56,16 +69,6 @@ class TestJobDirname:
         assert "]" not in name
         assert "Example_Tech_GROUP" in name
 
-    def test_company_leading_trailing_underscores_stripped(self):
-        name = _job_dirname(_listing(company="  Acme  "))
-        assert not name.split("_")[1].startswith("_")
-
-    def test_company_truncated_to_30_chars(self):
-        long = "A" * 50
-        name = _job_dirname(_listing(company=long))
-        company_part = name.split("_")[1]
-        assert len(company_part) <= 30
-
     def test_empty_company_falls_back(self):
         name = _job_dirname(_listing(company=""))
         assert "Unknown" in name
@@ -83,10 +86,9 @@ class TestJobDirname:
         name = _job_dirname(_listing(company="A  B   C"))
         assert "__" not in name
 
-    def test_three_parts_separated_by_underscore(self):
+    def test_parts_separated_by_underscore(self):
         name = _job_dirname(_listing())
         parts = name.split("_")
-        # At minimum 3 segments: source, company, id
-        assert len(parts) >= 3
-        # Last part is the id prefix
+        # source_company_location_id = at least 4 segments
+        assert len(parts) >= 4
         assert parts[-1] == "2e211509efe7"

@@ -1,0 +1,110 @@
+{
+  "name": {
+    "first": "Jane",
+    "last": "Sample",
+    "full": "Jane Sample"
+  },
+  "email": "jane.sample@example.com",
+  "phone": "+1 555 000 0000",
+  "address": {
+    "city": "Anytown",
+    "country": "Exampleland",
+    "country_code": "XX"
+  },
+  "linkedin_url": "https://www.linkedin.com/in/your-profile/",
+  "github_url": "",
+  "website_url": "",
+  "summary": "DevOps Engineer with 4 years of experience in CI/CD, Kubernetes, cloud platforms (AWS, GCP), and IaC (Terraform, Ansible).",
+  "years_of_experience": 4,
+  "work_authorization": "EU citizen",
+  "willing_to_relocate": true,
+  "sponsorship_required": false,
+  "notice_period": "1 month",
+  "salary_expectations": {
+    "b2b": {
+      "hourly": {
+        "EUR": 50,
+        "USD": 55,
+        "PLN": 220,
+        "GBP": 45
+      },
+      "monthly": {
+        "EUR": 8000,
+        "USD": 8800,
+        "PLN": 35000,
+        "GBP": 7000
+      },
+      "yearly": {
+        "EUR": 96000,
+        "USD": 105000,
+        "PLN": 420000,
+        "GBP": 84000
+      }
+    },
+    "permanent": {
+      "monthly": {
+        "EUR": 6000,
+        "USD": 6600,
+        "PLN": 26000,
+        "GBP": 5200
+      },
+      "yearly": {
+        "EUR": 72000,
+        "USD": 79000,
+        "PLN": 312000,
+        "GBP": 62000
+      }
+    }
+  },
+  "skills": [
+    "Python",
+    "Bash",
+    "AWS",
+    "GCP",
+    "Kubernetes",
+    "Docker",
+    "Helm",
+    "Terraform",
+    "Ansible",
+    "GitHub Actions",
+    "GitLab CI",
+    "PostgreSQL",
+    "Redis",
+    "Prometheus",
+    "Grafana",
+    "Linux"
+  ],
+  "work_history": [
+    {
+      "company": "Example Cloud Ltd",
+      "title": "DevOps Engineer",
+      "start": "2023-01",
+      "end": "present",
+      "location": "Remote"
+    },
+    {
+      "company": "Sample Systems",
+      "title": "Junior DevOps Engineer",
+      "start": "2021-01",
+      "end": "2022-12",
+      "location": "Anytown, Exampleland"
+    }
+  ],
+  "education": [
+    {
+      "institution": "Example University",
+      "degree": "Bachelor's degree in Computer Science",
+      "year": 2020
+    }
+  ],
+  "languages": [
+    {
+      "language": "English",
+      "level": "C1"
+    },
+    {
+      "language": "Spanish",
+      "level": "B1"
+    }
+  ]
+}

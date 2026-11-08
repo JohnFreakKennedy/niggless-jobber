@@ -223,7 +223,7 @@ Never stored inside the git repo.
     "country_code": "UA"
   },
   "linkedin_url": "https://linkedin.com/in/your-profile",
-  "github_url": "https://github.com/your-profile",
+  "github_url": "https://github.com/your-username",
   "website_url": "https://example.com",
   "summary": "Backend software engineer with 6 years of experience in Python and Go...",
   "years_of_experience": 6,
@@ -289,7 +289,7 @@ cp .env.example .env
 ```bash
 # Timezone for the scheduler and for logging
 # Format: IANA timezone name
-TZ=Europe/Kyiv
+TZ=Europe/Warsaw
 
 # Data directory (default: ~/.niggless-jobber)
 NIGGLESS_DATA_DIR=

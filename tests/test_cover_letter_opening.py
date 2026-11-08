@@ -24,7 +24,7 @@ def _info():
         "name": {"full": "Jane Sample"},
         "email": "test@example.com",
         "phone": "+48123456789",
-        "address": {"city": "Wroclaw", "country": "Poland"},
+        "address": {"city": "Anytown", "country": "Poland"},
     }
 
 
@@ -35,7 +35,7 @@ def _info():
 class TestProgrammaticOpening:
     def test_company_appears_before_ai_body(self):
         """Company name must be present in the template area before the AI body."""
-        ai_body = "SENTINEL_BODY_START"
+        ai_body = "SENTINELBODYSTART"
         tex = _assemble(ai_body, _listing(company="MegaCorp"), _info())
         sentinel_pos = tex.index(ai_body)
         pre_body = tex[:sentinel_pos]
@@ -43,7 +43,7 @@ class TestProgrammaticOpening:
 
     def test_job_title_appears_before_ai_body(self):
         """Job title must be present in the template area before the AI body."""
-        ai_body = "SENTINEL_BODY_START"
+        ai_body = "SENTINELBODYSTART"
         tex = _assemble(ai_body, _listing(title="Platform Engineer"), _info())
         sentinel_pos = tex.index(ai_body)
         pre_body = tex[:sentinel_pos]
@@ -51,7 +51,7 @@ class TestProgrammaticOpening:
 
     def test_opening_sentence_contains_both_company_and_title(self):
         """The programmatic opening sentence must reference both company and job title."""
-        ai_body = "SENTINEL_BODY_START"
+        ai_body = "SENTINELBODYSTART"
         tex = _assemble(ai_body, _listing(company="Acme", title="SRE"), _info())
         sentinel_pos = tex.index(ai_body)
         pre_body = tex[:sentinel_pos]
@@ -60,7 +60,7 @@ class TestProgrammaticOpening:
 
     def test_different_company_name_reflected(self):
         """A different company name is always reflected in the opening."""
-        sentinel = "XUNIQUE_SENTINEL_BODY_CONTENT_X"
+        sentinel = "XUNIQUESENTINELBODYCONTENTX"
         for company in ["Google", "Amazon", "Startup XYZ"]:
             tex = _assemble(sentinel, _listing(company=company), _info())
             opening_area = tex[:tex.index(sentinel)]
